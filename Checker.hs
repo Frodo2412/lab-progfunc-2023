@@ -49,6 +49,67 @@ instance Show Error where
   show (Expected ty ty') =
     "Expected: " ++ show ty ++ " Actual: " ++ show ty'
 
+{-
+-- Given a Program, check if it is well typed this consists of several phases
+If any of the phases fails it doesn't continue to the next one and returns de list of errors foud up to that point
+If all phases are successful it returns Ok
+the phases are:
+1. Check that there are no names repeated, that includes function names and argument names
+2. Check that the number of arguments in the definition of a function matches the signature
+  ex:
+    f :: ( Int ) -> Int
+    f (x , y ) = x + y
+3. Check that all names are defined
+  ex:
+    f :: ( Int ) -> Int
+    f ( x ) = x + z + g ( s )
+
+    main = h ( x )
+
+  output:
+    Undefined: z
+    Undefined: g
+    Undefined: s
+    Undefined: h
+    Undefined: x
+4. Check that the types of the arguments in the application match the signature
+This means the following:
+ * A boolean literal is of type Bool
+  * An integer literal is of type Int
+  * A infix expression e op e' depends of operator op
+    * If op is a relational operator then the subexpressions e and e' must be of the same type and the result is of type Bool
+    * If op is a arithmetic operator then the subexpressions e and e' must be of type Int and the result is of type Int
+  * The type of an if b then e else e' expression is the type of e and e' and b must be of type Bool
+  * The type of an expression let x :: t = e in e' is t if e is of type t and e' is of type t
+  * The type of an application of f (e1,..., ek) is t if f :: (t1,...,tn) -> t. It must be checked that the amount of
+    k arguments provided in the application matches the amount of arguments in the signature (independently that k=n)
+    and that each ei is of type ti. We have to check the type of min(k,n) arguments. Meaning that if k > n
+    then only the first n arguments are checked and if k <= n then only the first k arguments are checked.
+    ex:
+      f :: ( Int , Int ) -> Int
+      f (x , y ) = if x then x + y else x == True
+
+      main = False == f ( True ,2+( True *4) ,5)
+
+      output:
+        Expected: Bool Actual: Int
+        Expected: Int Actual: Bool
+        Expected: Int Actual: Bool
+        Expected: Bool Actual: Int
+        The number of arguments in the application of: f doesn’t match the signature (3 vs 2)
+        Expected: Int Actual: Bool
+        Expected: Int Actual: Bool
+  -}
+checkProgram :: Program -> Checked
+checkProgram (Program definitions expressions) =
+  case do
+    _ <- checkDefinitions definitions
+    _ <- checkNumberOfParameters definitions
+    return () of
+    Right _ -> Ok
+    Left errors -> Wrong errors
+
+-- Checks that there are no repeted function names in a list of definitions
 checkRepeatedFunctions :: Defs -> Checked
 checkRepeatedFunctions defs =
   case foldl
@@ -63,6 +124,7 @@ checkRepeatedFunctions defs =
     (_, []) -> Ok
     (_, repeated) -> Wrong (map Duplicated repeated)
 
+-- Checks for repeted names in a signle function
 checkRepeatedArgumentsSingleFunction :: FunDef -> [Name]
 checkRepeatedArgumentsSingleFunction (FunDef _ args _) =
   snd
@@ -76,12 +138,14 @@ checkRepeatedArgumentsSingleFunction (FunDef _ args _) =
         args
     )
 
+-- Checks for repeated arguments in a list of definitions
 checkRepeatedArguments :: Defs -> Either [Error] ()
 checkRepeatedArguments defs =
   case concatMap checkRepeatedArgumentsSingleFunction defs of
     [] -> Right ()
     errors -> Left (map Duplicated errors)
 
+-- 1) Checks that defenitions have no repeted fucntion names and no repeted argument names
 checkDefinitions :: Defs -> Either [Error] ()
 checkDefinitions defs = case checkRepeatedFunctions defs of
   Ok -> checkRepeatedArguments defs
@@ -89,6 +153,7 @@ checkDefinitions defs = case checkRepeatedFunctions defs of
     Right _ -> Left errors
     Left errors' -> Left (errors ++ errors')
 
+-- 2) Checks that the number of arguments in the application of a function matches the signature
 checkNumberOfParameters :: [FunDef] -> Either [Error] ()
 checkNumberOfParameters defs =
   foldl
@@ -112,13 +177,58 @@ checkNumberOfParameters defs =
         defs
     )
 
+-- Checks that all names are defined in an Expr
+-- Takes a FunDef and a list of names found up to that point and returns a list of errors
+-- If given a operator expression it checks that both subexpressions are defined and if not returns a list of errors, if given the case, returned by both subexpressions, is concatenated
+-- If given a if expression it checks that all subexpressions are defined and if not returns a list of errors, if given the case, returned by all subexpressions, is concatenated
+-- If given a let expression it checks that the expression is defined and if not returns a list of errors, if given the case, returned by the expression, is concatenated
+-- If given a application expression it checks that all subexpressions are defined and if not returns a list of errors, if given the case, returned by all subexpressions, is concatenated
+-- If given a variable expression it checks that the variable is defined and if not returns a list of errors, if given the case, returned by the variable, is concatenated
+-- If given a integer literal expression it returns []
+-- If given a boolean literal expression it returns []
+-- The names declared can be found in the FunDef as an argument or a recursive call to this function and the function names names found up to FunDef declaration
+checkNamesDefinedExpr :: FunDef -> [Name] -> [Error]
+checkNamesDefinedExpr (FunDef _ args expr) defined =
+  case expr of
+    Infix _ expr1 expr2 ->
+      checkNamesDefinedExpr (FunDef undefined args expr1) defined ++ checkNamesDefinedExpr (FunDef undefined args expr2) defined
+    If expr1 expr2 expr3 ->
+      checkNamesDefinedExpr (FunDef undefined args expr1) defined ++ checkNamesDefinedExpr (FunDef undefined args expr2) defined ++ checkNamesDefinedExpr (FunDef undefined args expr3) defined
+    Let typedVar expr1 expr2 ->
+      checkNamesDefinedExpr (FunDef undefined args expr1) defined ++ checkNamesDefinedExpr (FunDef undefined (fst typedVar : args) expr2) defined
+    App name exprs ->
+      concatMap (\expr -> checkNamesDefinedExpr (FunDef undefined args expr) defined) exprs ++ ([Undefined name | name `notElem` defined])
+    Var name -> ([Undefined name | name `notElem` args])
+    IntLit _ -> []
+    BoolLit _ -> []
 
+-- Checks that all names are defined in definitions
+-- Returns a (list of errors or ok, list of function names defined) tuple
+-- Go through all definitions and check that all names are defined in each definition
+-- Keeps in a list the names defined in each definition for the next definition so each iteration
+-- keeps the names defined in the previous definitions plus the name of the fuction in the step
+checkNamesDefined :: Defs -> ([Error], [Name])
+checkNamesDefined =
+  foldl
+    ( \(errors, defined) (FunDef typedFun args expr) ->
+        let newNamesDefined = fst typedFun : defined
+         in (errors ++ checkNamesDefinedExpr (FunDef typedFun args expr) newNamesDefined, newNamesDefined)
+    )
+    ([], [])
 
-checkProgram :: Program -> Checked
-checkProgram (Program definitions expressions) =
-  case do
-    _ <- checkDefinitions definitions
-    _ <- checkNumberOfParameters definitions
-    return () of
-    Right _ -> Ok
-    Left errors -> Wrong errors
+-- Checks that all names are defined in an Expr of Program given a list of function names defined
+-- Return a list of errors or ok
+checkNamesDefinedExprs :: [Name] -> Expr -> [Error]
+checkNamesDefinedExprs defined expr =
+  checkNamesDefinedExpr (FunDef undefined defined expr) defined
+
+-- 3) Checks that all names are defined
+-- First checks that all names are defined in definitions
+-- Then checks that all names are defined in main expression
+-- In any case resuls of ok or concatenation of errors of both phases
+checkNamesDefinedProgram :: Program -> Either [Error] ()
+checkNamesDefinedProgram (Program definitions expression) =
+  let (errors, defined) = checkNamesDefined definitions
+   in case checkNamesDefinedExprs defined expression of
+        [] -> Right ()
+        errors' -> Left (errors ++ errors')
