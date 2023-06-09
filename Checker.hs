@@ -105,6 +105,7 @@ checkProgram (Program definitions expressions) =
   case do
     _ <- checkDefinitions definitions
     _ <- checkNumberOfParameters definitions
+    _ <- checkNamesDefinedProgram (Program definitions expressions)
     return () of
     Right _ -> Ok
     Left errors -> Wrong errors
