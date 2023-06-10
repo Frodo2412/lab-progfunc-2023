@@ -100,12 +100,17 @@ This means the following:
         Expected: Int Actual: Bool
         Expected: Int Actual: Bool
   -}
+
+getDefs :: Program -> Defs
+getDefs (Program defs _) = defs  
+
 checkProgram :: Program -> Checked
-checkProgram (Program definitions expressions) =
+checkProgram program =
   case do
-    _ <- checkDefinitions definitions
-    _ <- checkNumberOfParameters definitions
-    _ <- checkNamesDefinedProgram (Program definitions expressions)
+    _ <- checkDefinitions $ getDefs program
+    _ <- checkNumberOfParameters $ getDefs program
+    _ <- checkNamesDefinedProgram program
+    _ <- checkProgramTypes program
     return () of
     Right _ -> Ok
     Left errors -> Wrong errors
@@ -233,3 +238,259 @@ checkNamesDefinedProgram (Program definitions expression) =
    in case checkNamesDefinedExprs defined expression of
         [] -> Right ()
         errors' -> Left (errors ++ errors')
+
+-- --------------------------------------------------
+
+{-
+4. Check that the types of the arguments in the application match the signature
+This means the following:
+ * A boolean literal is of type Bool
+  * An integer literal is of type Int
+  * A infix expression e op e' depends of operator op
+    * If op is a relational operator then the subexpressions e and e' must be of the same type and the result is of type Bool
+    * If op is a arithmetic operator then the subexpressions e and e' must be of type Int and the result is of type Int
+  * The type of an if b then e else e' expression is the type of e and e' and b must be of type Bool
+  * The type of an expression let x :: t = e in e' is t if e is of type t and e' is of type t
+  * The type of an application of f (e1,..., ek) is t if f :: (t1,...,tn) -> t. It must be checked that the amount of
+    k arguments provided in the application matches the amount of arguments in the signature (independently that k=n)
+    and that each ei is of type ti. We have to check the type of min(k,n) arguments. Meaning that if k > n
+    then only the first n arguments are checked and if k <= n then only the first k arguments are checked.
+    ex:
+      f :: ( Int , Int ) -> Int
+      f (x , y ) = if x then x + y else x == True
+
+      main = False == f ( True ,2+( True *4) ,5)
+
+      output:
+        Expected: Bool Actual: Int
+        Expected: Int Actual: Bool
+        Expected: Int Actual: Bool
+        Expected: Bool Actual: Int
+        The number of arguments in the application of: f doesn’t match the signature (3 vs 2)
+        Expected: Int Actual: Bool
+        Expected: Int Actual: Bool
+-}
+setType :: Env -> TypedVar -> Env
+setType env typedVar = typedVar : env
+
+getType :: Env -> Name -> Maybe Type
+getType [] _ = Nothing
+getType ((name, type') : env) name' =
+  if name == name'
+    then Just type'
+    else getType env name'
+
+type FuncEnv = [(Name, [Type])]
+
+getFuncTypes :: FuncEnv -> Name -> Maybe [Type]
+getFuncTypes [] _ = Nothing
+getFuncTypes ((name, types) : funcEnv) name' =
+  if name == name'
+    then Just types
+    else getFuncTypes funcEnv name'
+
+obtainType :: Expr -> Env -> Type
+obtainType (Var name) env =
+  fromMaybe TyInt (getType env name)
+obtainType (IntLit _) _ = TyInt
+obtainType (BoolLit _) _ = TyBool
+obtainType (Infix op expr1 expr2) env =
+  case op of
+    Add -> TyInt
+    Sub -> TyInt
+    Mult -> TyInt
+    Div -> TyInt
+    Eq -> TyBool
+    NEq -> TyBool
+    GTh -> TyBool
+    LTh -> TyBool
+    GEq -> TyBool
+    LEq -> TyBool
+obtainType (If expr1 expr2 expr3) env = obtainType expr2 env
+obtainType (Let typedVar expr1 expr2) env = obtainType expr2 (setType env typedVar)
+obtainType (App name exprs) env =
+  fromMaybe TyInt (getType env name)
+
+checkMathOperator :: Expr -> Env -> FuncEnv -> Maybe Type -> Type -> (Type, [Error])
+checkMathOperator (Infix op expr1 expr2) env functionEnv expectedType mathType =
+  let (type', errors) = checkExprType expr1 env functionEnv (Just TyInt)
+      (type'', errors') = checkExprType expr2 env functionEnv (Just TyInt)
+   in case expectedType of
+        Nothing -> (mathType, errors ++ errors')
+        Just expectedType ->
+          if expectedType == mathType
+            then (mathType, errors ++ errors')
+            else (mathType, [Expected expectedType mathType] ++ errors ++ errors')
+
+checkOrderOperator :: Expr -> Env -> FuncEnv -> Maybe Type -> (Type, [Error])
+checkOrderOperator (Infix op expr1 expr2) env functionEnv expectedType =
+  checkMathOperator (Infix op expr1 expr2) env functionEnv expectedType TyBool
+
+checkEqualityOperator :: Expr -> Env -> FuncEnv -> Maybe Type -> (Type, [Error])
+checkEqualityOperator (Infix op expr1 expr2) env functionEnv _ =
+  let firstArgType = obtainType expr1 env
+      secondArgType = obtainType expr2 env
+      (type', errors) = checkExprType expr1 env functionEnv (Just firstArgType)
+      (type'', errors') = checkExprType expr2 env functionEnv (Just secondArgType)
+   in if firstArgType == secondArgType
+        then (TyBool, errors ++ errors')
+        else (TyBool, [Expected firstArgType secondArgType] ++ errors ++ errors')
+
+checkArithemticOperator :: Expr -> Env -> FuncEnv -> Maybe Type -> (Type, [Error])
+checkArithemticOperator (Infix op expr1 expr2) env functionEnv expectedType =
+  checkMathOperator (Infix op expr1 expr2) env functionEnv expectedType TyInt
+
+auxCheckApplicationSigType :: Maybe Type -> Type -> [Error]
+auxCheckApplicationSigType expectedType returnType =
+  case expectedType of
+    Nothing -> []
+    Just expectedType -> ([Expected expectedType returnType | expectedType /= returnType])
+
+auxCheckApplicationLength :: Name -> Int -> Int -> [Error]
+auxCheckApplicationLength name expectedLength actualLength =
+  [ArgNumApp name expectedLength actualLength | expectedLength /= actualLength]
+
+auxCheckApplicationTypes :: [Type] -> [Type] -> Int -> [Error]
+auxCheckApplicationTypes expectedTypes actualTypes amountToCheck =
+  let expectedTypes' = take amountToCheck expectedTypes
+      actualTypes' = take amountToCheck actualTypes
+   in [Expected expectedType actualType | (expectedType, actualType) <- zip expectedTypes' actualTypes', expectedType /= actualType]
+
+checkExprType :: Expr -> Env -> FuncEnv -> Maybe Type -> (Type, [Error])
+checkExprType (Var name) env functionEnv expectedType =
+  case getType env name of
+    Nothing -> (TyInt, [Undefined name])
+    Just type' -> case expectedType of
+      Nothing -> (type', [])
+      Just expectedType ->
+        if type' == expectedType
+          then (type', [])
+          else (type', [Expected expectedType type'])
+checkExprType (IntLit _) _ _ expectedType =
+  case expectedType of
+    Nothing -> (TyInt, [])
+    Just expectedType ->
+      if expectedType == TyInt
+        then (TyInt, [])
+        else (TyInt, [Expected expectedType TyInt])
+checkExprType (BoolLit _) _ _ expectedType =
+  case expectedType of
+    Nothing -> (TyBool, [])
+    Just expectedType ->
+      if expectedType == TyBool
+        then (TyBool, [])
+        else (TyBool, [Expected expectedType TyBool])
+checkExprType (Infix op expr1 expr2) env functionEnv expectedType =
+  case op of
+    Add -> checkArithemticOperator (Infix op expr1 expr2) env functionEnv expectedType
+    Sub -> checkArithemticOperator (Infix op expr1 expr2) env functionEnv expectedType
+    Mult -> checkArithemticOperator (Infix op expr1 expr2) env functionEnv expectedType
+    Div -> checkArithemticOperator (Infix op expr1 expr2) env functionEnv expectedType
+    Eq -> checkEqualityOperator (Infix op expr1 expr2) env functionEnv expectedType
+    NEq -> checkEqualityOperator (Infix op expr1 expr2) env functionEnv expectedType
+    GTh -> checkOrderOperator (Infix op expr1 expr2) env functionEnv expectedType
+    LTh -> checkOrderOperator (Infix op expr1 expr2) env functionEnv expectedType
+    GEq -> checkOrderOperator (Infix op expr1 expr2) env functionEnv expectedType
+    LEq -> checkOrderOperator (Infix op expr1 expr2) env functionEnv expectedType
+checkExprType (If expr1 expr2 expr3) env functionEnv expectedType =
+  let (type', errors) = checkExprType expr1 env functionEnv (Just TyBool)
+      (type'', errors') = checkExprType expr2 env functionEnv expectedType
+      (type''', errors'') = checkExprType expr3 env functionEnv expectedType
+   in (type'', errors ++ errors' ++ errors'')
+checkExprType (Let typedVar expr1 expr2) env functionEnv expectedType =
+  let (type', errors) = checkExprType expr1 env functionEnv (Just (snd typedVar))
+      (type'', errors') = checkExprType expr2 (setType env typedVar) functionEnv expectedType
+   in (type'', errors ++ errors')
+checkExprType (App name exprs) env functionEnv expectedType =
+  let argumentsTypes = fromMaybe [TyInt] (getFuncTypes functionEnv name)
+      parameterTypes = map (`obtainType` env) exprs
+      functionReturnType = fromMaybe TyInt (getType env name)
+      lenghtArguments = length argumentsTypes
+      lenghtExprs = length exprs
+      minLenght = min lenghtArguments lenghtExprs
+   in (functionReturnType, auxCheckApplicationSigType expectedType functionReturnType ++ auxCheckApplicationLength name lenghtArguments lenghtExprs ++ auxCheckApplicationTypes argumentsTypes parameterTypes minLenght)
+
+envTuple :: FunDef -> (Name, Type)
+envTuple (FunDef (name, Sig argumentsTypes returnType) arguments expr) = (name, returnType)
+
+funcEnvTuple :: FunDef -> (Name, [Type])
+funcEnvTuple (FunDef (name, Sig argumentsTypes returnType) arguments expr) = (name, argumentsTypes)
+
+{-
+Function that takes a FunDef, Env and returns Env loaded with the function
+-}
+loadEnv :: FunDef -> Env -> Env
+loadEnv funcDef env = envTuple funcDef : env
+
+{-
+Function iterates over the list of FunDefs and does the following:
+1. Loads the function into the Env
+2. Loads the function into the FuncEnv
+-}
+loadEnvs :: Defs -> Env -> FuncEnv -> (Env, FuncEnv)
+loadEnvs [] env functionEnv = (env, functionEnv)
+loadEnvs (funcDef : funcDefs) env functionEnv =
+  let env' = loadEnv funcDef env
+      functionEnv' = funcEnvTuple funcDef : functionEnv
+   in loadEnvs funcDefs env' functionEnv'
+
+getExpr :: FunDef -> Expr
+getExpr (FunDef (name, Sig argumentsTypes returnType) arguments expr) = expr
+
+getReturnType :: FunDef -> Type
+getReturnType (FunDef (name, Sig argumentsTypes returnType) arguments expr) = returnType
+
+loadArgs :: FunDef -> Env -> Env
+loadArgs (FunDef (name, Sig argumentsTypes returnType) arguments expr) env = zip arguments argumentsTypes ++ env
+
+{-
+Function, given Defs and loaded Env and FuncEnv with function signatures, that iterates over the list of FunDefs and does the following:
+Checks types of the function using checkExprType
+-}
+checkDefsTypes :: Defs -> Env -> FuncEnv -> [Error]
+checkDefsTypes [] env functionEnv = []
+checkDefsTypes (funcDef : funcDefs) env functionEnv =
+  let (type', errors) = checkExprType (getExpr funcDef) (loadArgs funcDef env) functionEnv (Just (getReturnType funcDef))
+   in errors ++ checkDefsTypes funcDefs env functionEnv
+
+checkMain :: Expr -> Env -> FuncEnv -> [Error]
+checkMain expr env functionEnv =
+  let (type', errors) = checkExprType expr env functionEnv Nothing
+   in errors
+
+{-
+4. Check that the types of the arguments in the application match the signature
+This means the following:
+ * A boolean literal is of type Bool
+  * An integer literal is of type Int
+  * A infix expression e op e' depends of operator op
+    * If op is a relational operator then the subexpressions e and e' must be of the same type and the result is of type Bool
+    * If op is a arithmetic operator then the subexpressions e and e' must be of type Int and the result is of type Int
+  * The type of an if b then e else e' expression is the type of e and e' and b must be of type Bool
+  * The type of an expression let x :: t = e in e' is t if e is of type t and e' is of type t
+  * The type of an application of f (e1,..., ek) is t if f :: (t1,...,tn) -> t. It must be checked that the amount of
+    k arguments provided in the application matches the amount of arguments in the signature (independently that k=n)
+    and that each ei is of type ti. We have to check the type of min(k,n) arguments. Meaning that if k > n
+    then only the first n arguments are checked and if k <= n then only the first k arguments are checked.
+    ex:
+      f :: ( Int , Int ) -> Int
+      f (x , y ) = if x then x + y else x == True
+
+      main = False == f ( True ,2+( True *4) ,5)
+
+      output:
+        Expected: Bool Actual: Int
+        Expected: Int Actual: Bool
+        Expected: Int Actual: Bool
+        Expected: Bool Actual: Int
+        The number of arguments in the application of: f doesn’t match the signature (3 vs 2)
+        Expected: Int Actual: Bool
+        Expected: Int Actual: Bool
+-}   
+checkProgramTypes :: Program -> Either [Error] ()
+checkProgramTypes (Program defs expr) =
+  let (env, functionEnv) = loadEnvs defs [] []
+      errors = checkDefsTypes defs env functionEnv ++ checkMain expr env functionEnv
+   in if null errors
+        then Right ()
+        else Left errors

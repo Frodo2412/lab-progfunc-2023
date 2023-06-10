@@ -48,6 +48,6 @@ subst :: Name -> Expr -> Expr -> Expr
 subst = undefined
 
 letElimP :: Program -> Program 
-letElimP  = undefined
+letElimP prog = prog
 
 
