@@ -93,16 +93,16 @@ translateExpr (BoolLit value) = show (if value then 1 else 0)
 translateExpr (Infix op left right) =
     let
         translatedOp = case op of
-            Add -> "+"
-            Sub -> "-"
-            Mult -> "*"
-            Div -> "/"
-            Eq -> "=="
-            NEq -> "!="
-            GTh -> ">"
-            LTh -> "<"
-            GEq -> ">="
-            LEq -> "<="
+            Add -> " + "
+            Sub -> " - "
+            Mult -> " * "
+            Div -> " / "
+            Eq -> " == "
+            NEq -> " != "
+            GTh -> " > "
+            LTh -> " < "
+            GEq -> " >= "
+            LEq -> " <= "
     in
         "(" ++ translateExpr left ++ translatedOp ++ translateExpr right ++ ")"
 translateExpr (If condition thenExpr elseExpr) =
@@ -138,5 +138,5 @@ genProgram (Program defs expr) =
         translatedDefs = map translateFunction defs
         translatedExpr = translateExpr expr
     in
-        "#include <stdio.h>\n" ++ intercalate "\n" translatedDefs ++ "\nint main() {\nprintf(\"%d\\n\"," ++ translatedExpr ++ ");\n}"
+        "#include <stdio.h>" ++ intercalate "\n" translatedDefs ++ "\nint main() {\nprintf(\"%d\\n\"," ++ translatedExpr ++ "); }\n"
     

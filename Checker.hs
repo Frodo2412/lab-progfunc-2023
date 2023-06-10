@@ -102,7 +102,7 @@ This means the following:
   -}
 
 getDefs :: Program -> Defs
-getDefs (Program defs _) = defs  
+getDefs (Program defs _) = defs
 
 checkProgram :: Program -> Checked
 checkProgram program =
@@ -241,38 +241,11 @@ checkNamesDefinedProgram (Program definitions expression) =
 
 -- --------------------------------------------------
 
-{-
-4. Check that the types of the arguments in the application match the signature
-This means the following:
- * A boolean literal is of type Bool
-  * An integer literal is of type Int
-  * A infix expression e op e' depends of operator op
-    * If op is a relational operator then the subexpressions e and e' must be of the same type and the result is of type Bool
-    * If op is a arithmetic operator then the subexpressions e and e' must be of type Int and the result is of type Int
-  * The type of an if b then e else e' expression is the type of e and e' and b must be of type Bool
-  * The type of an expression let x :: t = e in e' is t if e is of type t and e' is of type t
-  * The type of an application of f (e1,..., ek) is t if f :: (t1,...,tn) -> t. It must be checked that the amount of
-    k arguments provided in the application matches the amount of arguments in the signature (independently that k=n)
-    and that each ei is of type ti. We have to check the type of min(k,n) arguments. Meaning that if k > n
-    then only the first n arguments are checked and if k <= n then only the first k arguments are checked.
-    ex:
-      f :: ( Int , Int ) -> Int
-      f (x , y ) = if x then x + y else x == True
-
-      main = False == f ( True ,2+( True *4) ,5)
-
-      output:
-        Expected: Bool Actual: Int
-        Expected: Int Actual: Bool
-        Expected: Int Actual: Bool
-        Expected: Bool Actual: Int
-        The number of arguments in the application of: f doesn’t match the signature (3 vs 2)
-        Expected: Int Actual: Bool
-        Expected: Int Actual: Bool
--}
+--Guarda la variable y su tipo en el entorno
 setType :: Env -> TypedVar -> Env
 setType env typedVar = typedVar : env
 
+--Recupera el tipo de una variable del entorno si esta
 getType :: Env -> Name -> Maybe Type
 getType [] _ = Nothing
 getType ((name, type') : env) name' =
@@ -280,8 +253,10 @@ getType ((name, type') : env) name' =
     then Just type'
     else getType env name'
 
+--Dado un nombre de funcion y la lista de los tipos de sus argumentos, guarda en el entorno el nombre de la funcion y su tipo
 type FuncEnv = [(Name, [Type])]
 
+--Recupera los tipos de los argumentos de una funcion del entorno si esta
 getFuncTypes :: FuncEnv -> Name -> Maybe [Type]
 getFuncTypes [] _ = Nothing
 getFuncTypes ((name, types) : funcEnv) name' =
@@ -289,6 +264,7 @@ getFuncTypes ((name, types) : funcEnv) name' =
     then Just types
     else getFuncTypes funcEnv name'
 
+--Obtener el tipo de una expresion sin importar si esta bien tipada o no
 obtainType :: Expr -> Env -> Type
 obtainType (Var name) env =
   fromMaybe TyInt (getType env name)
@@ -311,6 +287,16 @@ obtainType (Let typedVar expr1 expr2) env = obtainType expr2 (setType env typedV
 obtainType (App name exprs) env =
   fromMaybe TyInt (getType env name)
 
+{-
+checkMathOperator
+Dado una expresion, un entorno, un entorno de funciones, un posible tipo esperado y 
+el tipo default de la expresion, devuelve el tipo de la expresion y una lista de errores
+-Si el tipo esperado es Nothing, devuelve el tipo default y los errores de las subexpresiones
+-Si el tipo esperado es Just expectedType
+    -Si expectedType == mathType, devuelve el tipo default y los errores de las subexpresiones
+    -Si expectedType /= mathType, devuelve el tipo default y los errores de las subexpresiones 
+    sumado a un error de tipo
+-}
 checkMathOperator :: Expr -> Env -> FuncEnv -> Maybe Type -> Type -> (Type, [Error])
 checkMathOperator (Infix op expr1 expr2) env functionEnv expectedType mathType =
   let (type', errors) = checkExprType expr1 env functionEnv (Just TyInt)
@@ -322,19 +308,42 @@ checkMathOperator (Infix op expr1 expr2) env functionEnv expectedType mathType =
             then (mathType, errors ++ errors')
             else (mathType, [Expected expectedType mathType] ++ errors ++ errors')
 
+{-
+checkOrderOperator
+Dado una expresion, un entorno, un entorno de funciones y un posible tipo esperado,
+devuelve el tipo de la expresion y una lista de errores
+-}
 checkOrderOperator :: Expr -> Env -> FuncEnv -> Maybe Type -> (Type, [Error])
 checkOrderOperator (Infix op expr1 expr2) env functionEnv expectedType =
   checkMathOperator (Infix op expr1 expr2) env functionEnv expectedType TyBool
 
+{-
+checkEqualityOperator
+Dado una expresion, un entorno, un entorno de funciones y un posible tipo esperado,
+devuelve el tipo de la expresion y una lista de errores
+Si el tipo esperado es Nothing, devuelve bool y los errores de las subexpresiones
+Si el tipo esperado es Just expectedType
+    -Si expectedType == firstArgType == secondArgType, devuelve bool y los errores de las subexpresiones
+    -Si expectedType /= firstArgType == secondArgType, devuelve bool y los errores de las subexpresiones 
+    sumado a un error de tipo
+    -Si firstArgType /= secondArgType, devuelve bool y los errores de las subexpresiones 
+    sumado a un error de tipo
+-}
 checkEqualityOperator :: Expr -> Env -> FuncEnv -> Maybe Type -> (Type, [Error])
-checkEqualityOperator (Infix op expr1 expr2) env functionEnv _ =
+checkEqualityOperator (Infix op expr1 expr2) env functionEnv expectedType =
   let firstArgType = obtainType expr1 env
       secondArgType = obtainType expr2 env
       (type', errors) = checkExprType expr1 env functionEnv (Just firstArgType)
       (type'', errors') = checkExprType expr2 env functionEnv (Just secondArgType)
-   in if firstArgType == secondArgType
-        then (TyBool, errors ++ errors')
-        else (TyBool, [Expected firstArgType secondArgType] ++ errors ++ errors')
+      errorsExpr = if firstArgType == secondArgType
+        then errors ++ errors'
+        else [Expected firstArgType secondArgType] ++ errors ++ errors'
+   in case expectedType of
+        Nothing -> (TyBool, errors ++ errors')
+        Just expectedType ->
+          if expectedType == TyBool
+            then (TyBool, errorsExpr)
+            else (TyBool, Expected expectedType TyBool : errorsExpr)
 
 checkArithemticOperator :: Expr -> Env -> FuncEnv -> Maybe Type -> (Type, [Error])
 checkArithemticOperator (Infix op expr1 expr2) env functionEnv expectedType =
@@ -486,7 +495,7 @@ This means the following:
         The number of arguments in the application of: f doesn’t match the signature (3 vs 2)
         Expected: Int Actual: Bool
         Expected: Int Actual: Bool
--}   
+-}
 checkProgramTypes :: Program -> Either [Error] ()
 checkProgramTypes (Program defs expr) =
   let (env, functionEnv) = loadEnvs defs [] []
