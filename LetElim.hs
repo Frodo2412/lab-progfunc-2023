@@ -46,7 +46,6 @@ subst name e1 e2 = case e2 of
   Infix op e21 e22 -> Infix op (subst name e1 e21) (subst name e1 e22)
   If e21 e22 e23 -> If (subst name e1 e21) (subst name e1 e22) (subst name e1 e23)
   Let (name2, e21) e22 e23 -> if name == name2 then Let (name2, e21) e22 e23 else Let (name2, e21) (subst name e1 e22) (subst name e1 e23)
-  App name2 e21 -> App name2 (map (subst name e1) e21)
   _ -> e2
 
 makePass :: Expr -> (Bool, Expr) -- (changed, expr)
@@ -66,10 +65,6 @@ makePass s@(If e1 e2 e3) =
       (changed2, e22) = makePass e2
       (changed3, e33) = makePass e3
    in (changed1 || changed2 || changed3, If e11 e22 e33)
-makePass s@(App name e) =
-  let (changed, e1) =
-        foldl (\(changed, e1) e2 -> let (changed2, e22) = makePass e2 in (changed || changed2, e1 ++ [e22])) (False, []) e
-   in (changed, App name e1)
 makePass s = (False, s)
 
 letElim :: Expr -> Expr
