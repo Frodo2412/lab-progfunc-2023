@@ -122,7 +122,7 @@ checkRepeatedFunctions defs =
     ( \(found, repeated) (FunDef typedFun _ _) ->
         let functionName = fst typedFun
          in if functionName `elem` found
-              then (found, functionName : repeated)
+              then (found, repeated ++ [functionName])
               else (functionName : found, repeated)
     )
     ([], [])
@@ -137,7 +137,7 @@ checkRepeatedArgumentsSingleFunction (FunDef _ args _) =
     ( foldl
         ( \(found, repeated) arg ->
             if arg `elem` found
-              then (found, arg : repeated)
+              then (found, repeated ++ [arg])
               else (arg : found, repeated)
         )
         ([], [])
