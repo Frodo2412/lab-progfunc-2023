@@ -15,6 +15,7 @@ module Checker where
 import Data.List
 import Data.Maybe
 import Syntax
+import Foreign.C (errnoToIOError)
 
 -- CHECKER
 
@@ -340,7 +341,7 @@ checkEqualityOperator (Infix op expr1 expr2) env functionEnv expectedType =
           then errors ++ errors'
           else [Expected firstArgType secondArgType] ++ errors ++ errors'
    in case expectedType of
-        Nothing -> (TyBool, errors ++ errors')
+        Nothing -> (TyBool, errorsExpr)
         Just expectedType ->
           if expectedType == TyBool
             then (TyBool, errorsExpr)
@@ -418,7 +419,10 @@ checkExprType (App name exprs) env functionEnv expectedType =
       lenghtArguments = length argumentsTypes
       lenghtExprs = length exprs
       minLenght = min lenghtArguments lenghtExprs
-   in (functionReturnType, auxCheckApplicationSigType expectedType functionReturnType ++ auxCheckApplicationLength name lenghtArguments lenghtExprs ++ auxCheckApplicationTypes argumentsTypes parameterTypes minLenght)
+      numberOfParameterErrors = auxCheckApplicationLength name lenghtArguments lenghtExprs
+      argumentErrors = concatMap (\expr -> snd (checkExprType expr env functionEnv Nothing)) exprs
+      errors = auxCheckApplicationSigType expectedType functionReturnType ++ numberOfParameterErrors ++ auxCheckApplicationTypes argumentsTypes parameterTypes minLenght ++ argumentErrors
+   in (functionReturnType, errors)
 
 envTuple :: FunDef -> (Name, Type)
 envTuple (FunDef (name, Sig argumentsTypes returnType) arguments expr) = (name, returnType)
