@@ -203,7 +203,7 @@ checkNamesDefinedExpr (FunDef _ args expr) defined =
     Let typedVar expr1 expr2 ->
       checkNamesDefinedExpr (FunDef undefined args expr1) defined ++ checkNamesDefinedExpr (FunDef undefined (fst typedVar : args) expr2) defined
     App name exprs ->
-      concatMap (\expr -> checkNamesDefinedExpr (FunDef undefined args expr) defined) exprs ++ ([Undefined name | name `notElem` defined])
+      ([Undefined name | name `notElem` defined]) ++ concatMap (\expr -> checkNamesDefinedExpr (FunDef undefined args expr) defined) exprs
     Var name -> ([Undefined name | name `notElem` args])
     IntLit _ -> []
     BoolLit _ -> []
@@ -241,11 +241,11 @@ checkNamesDefinedProgram (Program definitions expression) =
 
 -- --------------------------------------------------
 
---Guarda la variable y su tipo en el entorno
+-- Guarda la variable y su tipo en el entorno
 setType :: Env -> TypedVar -> Env
 setType env typedVar = typedVar : env
 
---Recupera el tipo de una variable del entorno si esta
+-- Recupera el tipo de una variable del entorno si esta
 getType :: Env -> Name -> Maybe Type
 getType [] _ = Nothing
 getType ((name, type') : env) name' =
@@ -253,10 +253,10 @@ getType ((name, type') : env) name' =
     then Just type'
     else getType env name'
 
---Dado un nombre de funcion y la lista de los tipos de sus argumentos, guarda en el entorno el nombre de la funcion y su tipo
+-- Dado un nombre de funcion y la lista de los tipos de sus argumentos, guarda en el entorno el nombre de la funcion y su tipo
 type FuncEnv = [(Name, [Type])]
 
---Recupera los tipos de los argumentos de una funcion del entorno si esta
+-- Recupera los tipos de los argumentos de una funcion del entorno si esta
 getFuncTypes :: FuncEnv -> Name -> Maybe [Type]
 getFuncTypes [] _ = Nothing
 getFuncTypes ((name, types) : funcEnv) name' =
@@ -264,7 +264,7 @@ getFuncTypes ((name, types) : funcEnv) name' =
     then Just types
     else getFuncTypes funcEnv name'
 
---Obtener el tipo de una expresion sin importar si esta bien tipada o no
+-- Obtener el tipo de una expresion sin importar si esta bien tipada o no
 obtainType :: Expr -> Env -> Type
 obtainType (Var name) env =
   fromMaybe TyInt (getType env name)
@@ -289,12 +289,12 @@ obtainType (App name exprs) env =
 
 {-
 checkMathOperator
-Dado una expresion, un entorno, un entorno de funciones, un posible tipo esperado y 
+Dado una expresion, un entorno, un entorno de funciones, un posible tipo esperado y
 el tipo default de la expresion, devuelve el tipo de la expresion y una lista de errores
 -Si el tipo esperado es Nothing, devuelve el tipo default y los errores de las subexpresiones
 -Si el tipo esperado es Just expectedType
     -Si expectedType == mathType, devuelve el tipo default y los errores de las subexpresiones
-    -Si expectedType /= mathType, devuelve el tipo default y los errores de las subexpresiones 
+    -Si expectedType /= mathType, devuelve el tipo default y los errores de las subexpresiones
     sumado a un error de tipo
 -}
 checkMathOperator :: Expr -> Env -> FuncEnv -> Maybe Type -> Type -> (Type, [Error])
@@ -306,7 +306,7 @@ checkMathOperator (Infix op expr1 expr2) env functionEnv expectedType mathType =
         Just expectedType ->
           if expectedType == mathType
             then (mathType, errors ++ errors')
-            else (mathType, [Expected expectedType mathType] ++ errors ++ errors')
+            else (mathType, errors ++ errors' ++ [Expected expectedType mathType])
 
 {-
 checkOrderOperator
@@ -324,9 +324,9 @@ devuelve el tipo de la expresion y una lista de errores
 Si el tipo esperado es Nothing, devuelve bool y los errores de las subexpresiones
 Si el tipo esperado es Just expectedType
     -Si expectedType == firstArgType == secondArgType, devuelve bool y los errores de las subexpresiones
-    -Si expectedType /= firstArgType == secondArgType, devuelve bool y los errores de las subexpresiones 
+    -Si expectedType /= firstArgType == secondArgType, devuelve bool y los errores de las subexpresiones
     sumado a un error de tipo
-    -Si firstArgType /= secondArgType, devuelve bool y los errores de las subexpresiones 
+    -Si firstArgType /= secondArgType, devuelve bool y los errores de las subexpresiones
     sumado a un error de tipo
 -}
 checkEqualityOperator :: Expr -> Env -> FuncEnv -> Maybe Type -> (Type, [Error])
@@ -335,15 +335,16 @@ checkEqualityOperator (Infix op expr1 expr2) env functionEnv expectedType =
       secondArgType = obtainType expr2 env
       (type', errors) = checkExprType expr1 env functionEnv (Just firstArgType)
       (type'', errors') = checkExprType expr2 env functionEnv (Just secondArgType)
-      errorsExpr = if firstArgType == secondArgType
-        then errors ++ errors'
-        else [Expected firstArgType secondArgType] ++ errors ++ errors'
+      errorsExpr =
+        if firstArgType == secondArgType
+          then errors ++ errors'
+          else [Expected firstArgType secondArgType] ++ errors ++ errors'
    in case expectedType of
         Nothing -> (TyBool, errors ++ errors')
         Just expectedType ->
           if expectedType == TyBool
             then (TyBool, errorsExpr)
-            else (TyBool, Expected expectedType TyBool : errorsExpr)
+            else (TyBool, errorsExpr ++ [Expected expectedType TyBool])
 
 checkArithemticOperator :: Expr -> Env -> FuncEnv -> Maybe Type -> (Type, [Error])
 checkArithemticOperator (Infix op expr1 expr2) env functionEnv expectedType =
