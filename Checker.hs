@@ -179,7 +179,7 @@ checkNumberOfParameters defs =
                 typesLength = length types
              in if argsLength == typesLength
                   then Right ()
-                  else Left (ArgNumDef name argsLength typesLength)
+                  else Left (ArgNumDef name typesLength argsLength)
         )
         defs
     )
