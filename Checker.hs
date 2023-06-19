@@ -14,8 +14,8 @@ module Checker where
 
 import Data.List
 import Data.Maybe
-import Syntax
 import Foreign.C (errnoToIOError)
+import Syntax
 
 -- CHECKER
 
@@ -294,12 +294,20 @@ checkExprType (Infix op expr1 expr2) env functionEnv expectedType =
 checkExprType (If expr1 expr2 expr3) env functionEnv expectedType =
   let (type', errors) = checkExprType expr1 env functionEnv (Just TyBool)
       (type'', errors') = checkExprType expr2 env functionEnv expectedType
-      (type''', errors'') = checkExprType expr3 env functionEnv expectedType
+      (type''', errors'') = checkExprType expr3 env functionEnv (Just type'')
    in (type'', errors ++ errors' ++ errors'')
 checkExprType (Let typedVar expr1 expr2) env functionEnv expectedType =
-  let (type', errors) = checkExprType expr1 env functionEnv (Just (snd typedVar))
-      (type'', errors') = checkExprType expr2 (setType env typedVar) functionEnv expectedType
-   in (type'', errors ++ errors')
+  let retType = obtainType expr2 env
+      (type', errors) = checkExprType expr1 env functionEnv (Just (snd typedVar))
+      (type'', errors') = checkExprType expr2 (setType env typedVar) functionEnv (Just retType)
+   in case expectedType of
+        Nothing -> (type'', errors ++ errors')
+        Just someType ->
+          let allErrors =
+                if Just retType == expectedType
+                  then errors ++ errors'
+                  else Expected someType retType : (errors ++ errors')
+           in (someType, allErrors)
 checkExprType (App name exprs) env functionEnv expectedType =
   let argumentsTypes = fromMaybe [TyInt] (getFuncTypes functionEnv name)
       parameterTypes = map (`obtainType` env) exprs
