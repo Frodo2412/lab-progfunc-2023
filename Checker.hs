@@ -53,115 +53,6 @@ instance Show Error where
 getDefs :: Program -> Defs
 getDefs (Program defs _) = defs
 
-checkProgram :: Program -> Checked
-checkProgram program =
-  case do
-    _ <- checkDefinitions $ getDefs program
-    _ <- checkNumberOfParameters $ getDefs program
-    _ <- checkNamesDefinedProgram program
-    _ <- checkProgramTypes program
-    return () of
-    Right _ -> Ok
-    Left errors -> Wrong errors
-
-checkRepeatedFunctions :: Defs -> Checked
-checkRepeatedFunctions defs =
-  case foldl
-    ( \(found, repeated) (FunDef typedFun _ _) ->
-        let functionName = fst typedFun
-         in if functionName `elem` found
-              then (found, repeated ++ [functionName])
-              else (functionName : found, repeated)
-    )
-    ([], [])
-    defs of
-    (_, []) -> Ok
-    (_, repeated) -> Wrong (map Duplicated repeated)
-
-checkRepeatedArgumentsSingleFunction :: FunDef -> [Name]
-checkRepeatedArgumentsSingleFunction (FunDef _ args _) =
-  snd
-    ( foldl
-        ( \(found, repeated) arg ->
-            if arg `elem` found
-              then (found, repeated ++ [arg])
-              else (arg : found, repeated)
-        )
-        ([], [])
-        args
-    )
-
-checkRepeatedArguments :: Defs -> Either [Error] ()
-checkRepeatedArguments defs =
-  case concatMap checkRepeatedArgumentsSingleFunction defs of
-    [] -> Right ()
-    errors -> Left (map Duplicated errors)
-
-checkDefinitions :: Defs -> Either [Error] ()
-checkDefinitions defs = case checkRepeatedFunctions defs of
-  Ok -> checkRepeatedArguments defs
-  Wrong errors -> case checkRepeatedArguments defs of
-    Right _ -> Left errors
-    Left errors' -> Left (errors ++ errors')
-
-checkNumberOfParameters :: [FunDef] -> Either [Error] ()
-checkNumberOfParameters defs =
-  foldl
-    ( \acc res -> case acc of
-        Right _ -> case res of
-          Right _ -> Right ()
-          Left error -> Left [error]
-        Left errors -> case res of
-          Right _ -> Left errors
-          Left error -> Left (errors ++ [error])
-    )
-    (Right ())
-    ( map
-        ( \(FunDef (name, Sig types _) args _) ->
-            let argsLength = length args
-                typesLength = length types
-             in if argsLength == typesLength
-                  then Right ()
-                  else Left (ArgNumDef name typesLength argsLength)
-        )
-        defs
-    )
-
-checkNamesDefinedExpr :: FunDef -> [Name] -> [Error]
-checkNamesDefinedExpr (FunDef _ args expr) defined =
-  case expr of
-    Infix _ expr1 expr2 ->
-      checkNamesDefinedExpr (FunDef undefined args expr1) defined ++ checkNamesDefinedExpr (FunDef undefined args expr2) defined
-    If expr1 expr2 expr3 ->
-      checkNamesDefinedExpr (FunDef undefined args expr1) defined ++ checkNamesDefinedExpr (FunDef undefined args expr2) defined ++ checkNamesDefinedExpr (FunDef undefined args expr3) defined
-    Let typedVar expr1 expr2 ->
-      checkNamesDefinedExpr (FunDef undefined args expr1) defined ++ checkNamesDefinedExpr (FunDef undefined (fst typedVar : args) expr2) defined
-    App name exprs ->
-      ([Undefined name | name `notElem` defined]) ++ concatMap (\expr -> checkNamesDefinedExpr (FunDef undefined args expr) defined) exprs
-    Var name -> ([Undefined name | name `notElem` args])
-    IntLit _ -> []
-    BoolLit _ -> []
-
-checkNamesDefined :: Defs -> ([Error], [Name])
-checkNamesDefined =
-  foldl
-    ( \(errors, defined) (FunDef typedFun args expr) ->
-        let newNamesDefined = fst typedFun : defined
-         in (errors ++ checkNamesDefinedExpr (FunDef typedFun args expr) newNamesDefined, newNamesDefined)
-    )
-    ([], [])
-
-checkNamesDefinedExprs :: [Name] -> Expr -> [Error]
-checkNamesDefinedExprs defined expr =
-  checkNamesDefinedExpr (FunDef undefined defined expr) defined
-
-checkNamesDefinedProgram :: Program -> Either [Error] ()
-checkNamesDefinedProgram (Program definitions expression) =
-  let (errors, defined) = checkNamesDefined definitions
-   in case checkNamesDefinedExprs defined expression of
-        [] -> Right ()
-        errors' -> Left (errors ++ errors')
-
 setType :: Env -> TypedVar -> Env
 setType env typedVar = typedVar : env
 
@@ -363,3 +254,121 @@ checkProgramTypes (Program defs expr) =
    in if null errors
         then Right ()
         else Left errors
+
+-- 2.1 Repeticion de nombres
+
+checkRepeatedFunctions :: Defs -> Checked
+checkRepeatedFunctions defs =
+  case foldl
+    ( \(found, repeated) (FunDef typedFun _ _) ->
+        let functionName = fst typedFun
+         in if functionName `elem` found
+              then (found, repeated ++ [functionName])
+              else (functionName : found, repeated)
+    )
+    ([], [])
+    defs of
+    (_, []) -> Ok
+    (_, repeated) -> Wrong (map Duplicated repeated)
+
+checkRepeatedArgumentsSingleFunction :: FunDef -> [Name]
+checkRepeatedArgumentsSingleFunction (FunDef _ args _) =
+  snd
+    ( foldl
+        ( \(found, repeated) arg ->
+            if arg `elem` found
+              then (found, repeated ++ [arg])
+              else (arg : found, repeated)
+        )
+        ([], [])
+        args
+    )
+
+checkRepeatedArguments :: Defs -> Either [Error] ()
+checkRepeatedArguments defs =
+  case concatMap checkRepeatedArgumentsSingleFunction defs of
+    [] -> Right ()
+    errors -> Left (map Duplicated errors)
+
+checkDefinitions :: Defs -> Either [Error] ()
+checkDefinitions defs = case checkRepeatedFunctions defs of
+  Ok -> checkRepeatedArguments defs
+  Wrong errors -> case checkRepeatedArguments defs of
+    Right _ -> Left errors
+    Left errors' -> Left (errors ++ errors')
+
+-- 2.2 Numero de Parametros
+
+checkNumberOfParameters :: [FunDef] -> Either [Error] ()
+checkNumberOfParameters defs =
+  foldl
+    ( \acc res -> case acc of
+        Right _ -> case res of
+          Right _ -> Right ()
+          Left error -> Left [error]
+        Left errors -> case res of
+          Right _ -> Left errors
+          Left error -> Left (errors ++ [error])
+    )
+    (Right ())
+    ( map
+        ( \(FunDef (name, Sig types _) args _) ->
+            let argsLength = length args
+                typesLength = length types
+             in if argsLength == typesLength
+                  then Right ()
+                  else Left (ArgNumDef name typesLength argsLength)
+        )
+        defs
+    )
+
+-- 2.3 Nombres no declarados
+
+
+checkNamesDefinedExpr :: FunDef -> [Name] -> [Error]
+checkNamesDefinedExpr (FunDef _ args expr) defined =
+  case expr of
+    Infix _ expr1 expr2 ->
+      checkNamesDefinedExpr (FunDef undefined args expr1) defined ++ checkNamesDefinedExpr (FunDef undefined args expr2) defined
+    If expr1 expr2 expr3 ->
+      checkNamesDefinedExpr (FunDef undefined args expr1) defined ++ checkNamesDefinedExpr (FunDef undefined args expr2) defined ++ checkNamesDefinedExpr (FunDef undefined args expr3) defined
+    Let typedVar expr1 expr2 ->
+      checkNamesDefinedExpr (FunDef undefined args expr1) defined ++ checkNamesDefinedExpr (FunDef undefined (fst typedVar : args) expr2) defined
+    App name exprs ->
+      ([Undefined name | name `notElem` defined]) ++ concatMap (\expr -> checkNamesDefinedExpr (FunDef undefined args expr) defined) exprs
+    Var name -> ([Undefined name | name `notElem` args])
+    IntLit _ -> []
+    BoolLit _ -> []
+
+checkNamesDefined :: Defs -> ([Error], [Name])
+checkNamesDefined =
+  foldl
+    ( \(errors, defined) (FunDef typedFun args expr) ->
+        let newNamesDefined = fst typedFun : defined
+         in (errors ++ checkNamesDefinedExpr (FunDef typedFun args expr) newNamesDefined, newNamesDefined)
+    )
+    ([], [])
+
+checkNamesDefinedExprs :: [Name] -> Expr -> [Error]
+checkNamesDefinedExprs defined expr =
+  checkNamesDefinedExpr (FunDef undefined defined expr) defined
+
+checkNamesDefinedProgram :: Program -> Either [Error] ()
+checkNamesDefinedProgram (Program definitions expression) =
+  let (errors, defined) = checkNamesDefined definitions
+   in case checkNamesDefinedExprs defined expression of
+        [] -> Right ()
+        errors' -> Left (errors ++ errors')
+
+-- 2.4 Chequeo de tipos
+
+checkProgram :: Program -> Checked
+checkProgram program =
+  case do
+    _ <- checkDefinitions $ getDefs program
+    _ <- checkNumberOfParameters $ getDefs program
+    _ <- checkNamesDefinedProgram program
+    _ <- checkProgramTypes program
+    return () of
+    Right _ -> Ok
+    Left errors -> Wrong errors
