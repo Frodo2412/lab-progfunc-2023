@@ -18,7 +18,7 @@ clean :
 
 #We want the above tests: command to do waht it does and compare the output wiht the files with same name in ./tests
 AMOUNT_OF_NORMAL_TESTS = 9
-AMOUNT_OF_ERROR_TESTS = 4
+AMOUNT_OF_ERROR_TESTS = 7
 #At each step make it clear what you are doing
 tests: FORCE
 	mkdir -p localtests
