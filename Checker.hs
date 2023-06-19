@@ -12,6 +12,8 @@ module Checker where
 -- se pueden agregar mas importaciones
 -- en caso de ser necesario
 
+import Control.Concurrent.STM (check)
+import Control.Monad.State (MonadState (get), State)
 import Data.List
 import Data.Maybe
 import Foreign.C (errnoToIOError)
@@ -52,208 +54,6 @@ instance Show Error where
 
 getDefs :: Program -> Defs
 getDefs (Program defs _) = defs
-
-setType :: Env -> TypedVar -> Env
-setType env typedVar = typedVar : env
-
-getType :: Env -> Name -> Maybe Type
-getType [] _ = Nothing
-getType ((name, type') : env) name' =
-  if name == name'
-    then Just type'
-    else getType env name'
-
-type FuncEnv = [(Name, [Type])]
-
-getFuncTypes :: FuncEnv -> Name -> Maybe [Type]
-getFuncTypes [] _ = Nothing
-getFuncTypes ((name, types) : funcEnv) name' =
-  if name == name'
-    then Just types
-    else getFuncTypes funcEnv name'
-
-obtainType :: Expr -> Env -> Type
-obtainType (Var name) env =
-  fromMaybe TyInt (getType env name)
-obtainType (IntLit _) _ = TyInt
-obtainType (BoolLit _) _ = TyBool
-obtainType (Infix op expr1 expr2) env =
-  case op of
-    Add -> TyInt
-    Sub -> TyInt
-    Mult -> TyInt
-    Div -> TyInt
-    Eq -> TyBool
-    NEq -> TyBool
-    GTh -> TyBool
-    LTh -> TyBool
-    GEq -> TyBool
-    LEq -> TyBool
-obtainType (If expr1 expr2 expr3) env = obtainType expr2 env
-obtainType (Let typedVar expr1 expr2) env = obtainType expr2 (setType env typedVar)
-obtainType (App name exprs) env =
-  fromMaybe TyInt (getType env name)
-
-checkMathOperator :: Expr -> Env -> FuncEnv -> Maybe Type -> Type -> (Type, [Error])
-checkMathOperator (Infix op expr1 expr2) env functionEnv expectedType mathType =
-  let (type', errors) = checkExprType expr1 env functionEnv (Just TyInt)
-      (type'', errors') = checkExprType expr2 env functionEnv (Just TyInt)
-   in case expectedType of
-        Nothing -> (mathType, errors ++ errors')
-        Just expectedType ->
-          if expectedType == mathType
-            then (mathType, errors ++ errors')
-            else (mathType, errors ++ errors' ++ [Expected expectedType mathType])
-
-checkOrderOperator :: Expr -> Env -> FuncEnv -> Maybe Type -> (Type, [Error])
-checkOrderOperator (Infix op expr1 expr2) env functionEnv expectedType =
-  checkMathOperator (Infix op expr1 expr2) env functionEnv expectedType TyBool
-
-checkEqualityOperator :: Expr -> Env -> FuncEnv -> Maybe Type -> (Type, [Error])
-checkEqualityOperator (Infix op expr1 expr2) env functionEnv expectedType =
-  let firstArgType = obtainType expr1 env
-      secondArgType = obtainType expr2 env
-      (type', errors) = checkExprType expr1 env functionEnv (Just firstArgType)
-      (type'', errors') = checkExprType expr2 env functionEnv (Just secondArgType)
-      errorsExpr =
-        if firstArgType == secondArgType
-          then errors ++ errors'
-          else [Expected firstArgType secondArgType] ++ errors ++ errors'
-   in case expectedType of
-        Nothing -> (TyBool, errorsExpr)
-        Just expectedType ->
-          if expectedType == TyBool
-            then (TyBool, errorsExpr)
-            else (TyBool, errorsExpr ++ [Expected expectedType TyBool])
-
-checkArithemticOperator :: Expr -> Env -> FuncEnv -> Maybe Type -> (Type, [Error])
-checkArithemticOperator (Infix op expr1 expr2) env functionEnv expectedType =
-  checkMathOperator (Infix op expr1 expr2) env functionEnv expectedType TyInt
-
-auxCheckApplicationSigType :: Maybe Type -> Type -> [Error]
-auxCheckApplicationSigType expectedType returnType =
-  case expectedType of
-    Nothing -> []
-    Just expectedType -> ([Expected expectedType returnType | expectedType /= returnType])
-
-auxCheckApplicationLength :: Name -> Int -> Int -> [Error]
-auxCheckApplicationLength name expectedLength actualLength =
-  [ArgNumApp name expectedLength actualLength | expectedLength /= actualLength]
-
-auxCheckApplicationTypes :: [Type] -> [Type] -> Int -> [Error]
-auxCheckApplicationTypes expectedTypes actualTypes amountToCheck =
-  let expectedTypes' = take amountToCheck expectedTypes
-      actualTypes' = take amountToCheck actualTypes
-   in [Expected expectedType actualType | (expectedType, actualType) <- zip expectedTypes' actualTypes', expectedType /= actualType]
-
-checkExprType :: Expr -> Env -> FuncEnv -> Maybe Type -> (Type, [Error])
-checkExprType (Var name) env functionEnv expectedType =
-  case getType env name of
-    Nothing -> (TyInt, [Undefined name])
-    Just type' -> case expectedType of
-      Nothing -> (type', [])
-      Just expectedType ->
-        if type' == expectedType
-          then (type', [])
-          else (type', [Expected expectedType type'])
-checkExprType (IntLit _) _ _ expectedType =
-  case expectedType of
-    Nothing -> (TyInt, [])
-    Just expectedType ->
-      if expectedType == TyInt
-        then (TyInt, [])
-        else (TyInt, [Expected expectedType TyInt])
-checkExprType (BoolLit _) _ _ expectedType =
-  case expectedType of
-    Nothing -> (TyBool, [])
-    Just expectedType ->
-      if expectedType == TyBool
-        then (TyBool, [])
-        else (TyBool, [Expected expectedType TyBool])
-checkExprType (Infix op expr1 expr2) env functionEnv expectedType =
-  case op of
-    Add -> checkArithemticOperator (Infix op expr1 expr2) env functionEnv expectedType
-    Sub -> checkArithemticOperator (Infix op expr1 expr2) env functionEnv expectedType
-    Mult -> checkArithemticOperator (Infix op expr1 expr2) env functionEnv expectedType
-    Div -> checkArithemticOperator (Infix op expr1 expr2) env functionEnv expectedType
-    Eq -> checkEqualityOperator (Infix op expr1 expr2) env functionEnv expectedType
-    NEq -> checkEqualityOperator (Infix op expr1 expr2) env functionEnv expectedType
-    GTh -> checkOrderOperator (Infix op expr1 expr2) env functionEnv expectedType
-    LTh -> checkOrderOperator (Infix op expr1 expr2) env functionEnv expectedType
-    GEq -> checkOrderOperator (Infix op expr1 expr2) env functionEnv expectedType
-    LEq -> checkOrderOperator (Infix op expr1 expr2) env functionEnv expectedType
-checkExprType (If expr1 expr2 expr3) env functionEnv expectedType =
-  let (type', errors) = checkExprType expr1 env functionEnv (Just TyBool)
-      (type'', errors') = checkExprType expr2 env functionEnv expectedType
-      (type''', errors'') = checkExprType expr3 env functionEnv (Just type'')
-   in (type'', errors ++ errors' ++ errors'')
-checkExprType (Let typedVar expr1 expr2) env functionEnv expectedType =
-  let retType = obtainType expr2 env
-      (type', errors) = checkExprType expr1 env functionEnv (Just (snd typedVar))
-      (type'', errors') = checkExprType expr2 (setType env typedVar) functionEnv (Just retType)
-   in case expectedType of
-        Nothing -> (type'', errors ++ errors')
-        Just someType ->
-          let allErrors =
-                if Just retType == expectedType
-                  then errors ++ errors'
-                  else Expected someType retType : (errors ++ errors')
-           in (someType, allErrors)
-checkExprType (App name exprs) env functionEnv expectedType =
-  let argumentsTypes = fromMaybe [TyInt] (getFuncTypes functionEnv name)
-      parameterTypes = map (`obtainType` env) exprs
-      functionReturnType = fromMaybe TyInt (getType env name)
-      lenghtArguments = length argumentsTypes
-      lenghtExprs = length exprs
-      minLenght = min lenghtArguments lenghtExprs
-      numberOfParameterErrors = auxCheckApplicationLength name lenghtArguments lenghtExprs
-      argumentErrors = concatMap (\expr -> snd (checkExprType expr env functionEnv Nothing)) exprs
-      errors = auxCheckApplicationSigType expectedType functionReturnType ++ numberOfParameterErrors ++ auxCheckApplicationTypes argumentsTypes parameterTypes minLenght ++ argumentErrors
-   in (functionReturnType, errors)
-
-envTuple :: FunDef -> (Name, Type)
-envTuple (FunDef (name, Sig argumentsTypes returnType) arguments expr) = (name, returnType)
-
-funcEnvTuple :: FunDef -> (Name, [Type])
-funcEnvTuple (FunDef (name, Sig argumentsTypes returnType) arguments expr) = (name, argumentsTypes)
-
-loadEnv :: FunDef -> Env -> Env
-loadEnv funcDef env = envTuple funcDef : env
-
-loadEnvs :: Defs -> Env -> FuncEnv -> (Env, FuncEnv)
-loadEnvs [] env functionEnv = (env, functionEnv)
-loadEnvs (funcDef : funcDefs) env functionEnv =
-  let env' = loadEnv funcDef env
-      functionEnv' = funcEnvTuple funcDef : functionEnv
-   in loadEnvs funcDefs env' functionEnv'
-
-getExpr :: FunDef -> Expr
-getExpr (FunDef (name, Sig argumentsTypes returnType) arguments expr) = expr
-
-getReturnType :: FunDef -> Type
-getReturnType (FunDef (name, Sig argumentsTypes returnType) arguments expr) = returnType
-
-loadArgs :: FunDef -> Env -> Env
-loadArgs (FunDef (name, Sig argumentsTypes returnType) arguments expr) env = zip arguments argumentsTypes ++ env
-
-checkDefsTypes :: Defs -> Env -> FuncEnv -> [Error]
-checkDefsTypes [] env functionEnv = []
-checkDefsTypes (funcDef : funcDefs) env functionEnv =
-  let (type', errors) = checkExprType (getExpr funcDef) (loadArgs funcDef env) functionEnv (Just (getReturnType funcDef))
-   in errors ++ checkDefsTypes funcDefs env functionEnv
-
-checkMain :: Expr -> Env -> FuncEnv -> [Error]
-checkMain expr env functionEnv =
-  let (type', errors) = checkExprType expr env functionEnv Nothing
-   in errors
-
-checkProgramTypes :: Program -> Either [Error] ()
-checkProgramTypes (Program defs expr) =
-  let (env, functionEnv) = loadEnvs defs [] []
-      errors = checkDefsTypes defs env functionEnv ++ checkMain expr env functionEnv
-   in if null errors
-        then Right ()
-        else Left errors
 
 -- 2.1 Repeticion de nombres
 
@@ -324,7 +124,6 @@ checkNumberOfParameters defs =
 
 -- 2.3 Nombres no declarados
 
-
 checkNamesDefinedExpr :: FunDef -> [Name] -> [Error]
 checkNamesDefinedExpr (FunDef _ args expr) defined =
   case expr of
@@ -361,6 +160,48 @@ checkNamesDefinedProgram (Program definitions expression) =
         errors' -> Left (errors ++ errors')
 
 -- 2.4 Chequeo de tipos
+
+-- Retorna el tipo de la expresion
+typeOf :: Expr -> State Env Type
+--
+typeOf (Var name) = do
+  env <- get
+  case lookup name env of
+    Just ty -> return ty
+    Nothing -> error "Undefined variable"
+--
+typeOf (IntLit _) = return TyInt
+--
+typeOf (BoolLit _) = return TyBool
+--
+typeOf (If _ expr _) = typeOf expr
+--
+typeOf (Let _ _ expr) = typeOf expr
+--
+typeOf (App name _) = do
+  env <- get
+  case lookup name env of
+    Just ty -> return ty
+    Nothing -> error "Undefined variable"
+--
+typeOf (Infix op _ _) = return (checkInfixType op)
+
+checkInfixType :: Op -> Type
+checkInfixType op = case op of
+  Add -> TyInt
+  Sub -> TyInt
+  Mult -> TyInt
+  Div -> TyInt
+  Eq -> TyBool
+  NEq -> TyBool
+  GTh -> TyBool
+  LTh -> TyBool
+  GEq -> TyBool
+  LEq -> TyBool
+
+--
+
+checkProgramTypes = undefined
 
 checkProgram :: Program -> Checked
 checkProgram program =
