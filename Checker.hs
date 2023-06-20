@@ -16,17 +16,6 @@ import Control.Monad.State
 import Data.List
 import Data.Maybe
 import Syntax
-  ( Defs,
-    Env,
-    Expr (..),
-    FunDef (..),
-    Name,
-    Op (..),
-    Program (..),
-    Sig (Sig),
-    Type (..),
-    TypedFun,
-  )
 
 -- CHECKER
 
