@@ -26,7 +26,7 @@ jobs:
       - uses: haskell/actions/setup@v2
       - run: echo "Running normal tests..."
       - run: echo "Test ${{ matrix.normal-tests }}..."
-      - run: runHaskell Compiler.hs -o localtests/ejemplo${{ matrix.normal-tests }}
+      - run: runhaskell Compiler.hs -o localtests/ejemplo${{ matrix.normal-tests }}
       - run: echo "Normal:"
       - run: diff localtests/ejemplo${{ matrix.normal-tests }}.c tests/ejemplo${{ matrix.normal-tests }}.c
       - run: echo "Optimized:"
@@ -56,7 +56,7 @@ jobs:
       - uses: haskell/actions/setup@v2
       - run: echo "Running error tests..."
       - run: echo "Test ${{ matrix.error-tests }}..."
-      - run: runHaskell Compiler.hs -o localtests/ejemplo${{ matrix.error-tests }}
+      - run: runhaskell Compiler.hs -o localtests/ejemplo${{ matrix.error-tests }}
       - run: echo "Error:"
       - run: diff localtests/ejemplo${{ matrix.error-tests }}.err.err tests/ejemplo${{ matrix.error-tests }}.err.err
       - run: echo "🍏 This job's status is ${{ job.status }}."
