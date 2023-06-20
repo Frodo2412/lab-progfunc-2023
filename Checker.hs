@@ -177,7 +177,7 @@ typeOf (App name _) = do
   (_, functions) <- get
   case lookup name functions of
     Just (Sig _ ret) -> return ret
-    Nothing -> error "Undefined variable"
+    Nothing -> error ("Undefined variable " ++ name)
 --
 typeOf (Infix op _ _) = return (typeOfOp op)
 
