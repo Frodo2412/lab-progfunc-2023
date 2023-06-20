@@ -12,8 +12,7 @@ module Checker where
 -- se pueden agregar mas importaciones
 -- en caso de ser necesario
 
-import Control.Concurrent.STM (check)
-import Control.Monad.State (MonadState (get), State)
+import Control.Monad.State
 import Data.List
 import Data.Maybe
 import Foreign.C (errnoToIOError)
@@ -162,11 +161,11 @@ checkNamesDefinedProgram (Program definitions expression) =
 -- 2.4 Chequeo de tipos
 
 -- Retorna el tipo de la expresion
-typeOf :: Expr -> State Env Type
+typeOf :: Expr -> State (Env, [TypedFun]) Type
 --
 typeOf (Var name) = do
-  env <- get
-  case lookup name env of
+  (variables, _) <- get
+  case lookup name variables of
     Just ty -> return ty
     Nothing -> error "Undefined variable"
 --
@@ -179,15 +178,16 @@ typeOf (If _ expr _) = typeOf expr
 typeOf (Let _ _ expr) = typeOf expr
 --
 typeOf (App name _) = do
-  env <- get
-  case lookup name env of
-    Just ty -> return ty
+  (_, functions) <- get
+  case lookup name functions of
+    Just (Sig _ ret) -> return ret
     Nothing -> error "Undefined variable"
 --
-typeOf (Infix op _ _) = return (checkInfixType op)
+typeOf (Infix op _ _) = return (typeOfOp op)
 
-checkInfixType :: Op -> Type
-checkInfixType op = case op of
+-- Operator utilities
+typeOfOp :: Op -> Type
+typeOfOp op = case op of
   Add -> TyInt
   Sub -> TyInt
   Mult -> TyInt
@@ -199,8 +199,83 @@ checkInfixType op = case op of
   GEq -> TyBool
   LEq -> TyBool
 
---
+-- Function utilities
+typeOfFunc :: TypedFun -> Type
+typeOfFunc (_, Sig _ ret) = ret
 
+-- Chequea el tipo de la expresion
+checkType :: Expr -> Type -> State (Env, [TypedFun]) [Error]
+--
+checkType (Infix op left right) expected = case op of
+  Add -> checkArithmeticOperator left right expected
+--
+checkType (If cond thenExpr elseExpr) expected =
+  do
+    trueType <- typeOf thenExpr
+    condErrors <- checkType cond TyBool
+    thenErrors <- checkType thenExpr trueType
+    elseErrors <- checkType elseExpr trueType
+    return ([Expected expected trueType | expected /= trueType] ++ condErrors ++ thenErrors ++ elseErrors)
+--
+checkType (Let inner@(name, innerType) innerExpr outerExpr) expected =
+  do
+    trueType <- typeOf outerExpr
+    innerErrors <- checkType innerExpr innerType
+    _ <- modify (\(v, f) -> (inner : v, f))
+    outerErrors <- checkType outerExpr trueType
+    return ([Expected expected trueType | expected /= trueType] ++ innerErrors ++ outerErrors)
+--
+checkType func@(App name args) expected =
+  do
+    actual <- typeOf func
+    args <- getArguments name
+    let argNumbAppError = checkNumberOfArguments func args
+    argTypeErrors <- checkArgumentTypes func args
+    return ([Expected expected actual | expected /= actual] ++ argNumbAppError ++ argTypeErrors)
+-- Covers var and literals
+checkType expr expected =
+  do
+    actual <- typeOf expr
+    return ([Expected expected actual | expected /= actual])
+
+-- Operator utility functions
+checkArithmeticOperator :: Expr -> Expr -> Type -> State (Env, [TypedFun]) [Error]
+checkArithmeticOperator left right expected =
+  do
+    leftErrors <- checkType left TyInt
+    rightErrors <- checkType right TyInt
+    return ([Expected expected TyInt | expected /= TyInt] ++ leftErrors ++ rightErrors)
+
+checkComparisonOperator :: Expr -> Expr -> Type -> State (Env, [TypedFun]) [Error]
+checkComparisonOperator left right expected =
+  do
+    trueType <- typeOf left
+    leftErrors <- checkType left trueType
+    rightErrors <- checkType right trueType
+    return ([Expected expected TyBool | expected /= TyBool] ++ leftErrors ++ rightErrors)
+
+-- Function utility functions
+checkNumberOfArguments (App name exprs) args =
+  let actualLength = length exprs
+      expectedLength = length args
+   in [ArgNumApp name actualLength expectedLength | actualLength /= expectedLength]
+
+checkArgumentTypes (App name exprs) args =
+  do
+    errors <- zipWithM checkType exprs args
+    return (concat errors)
+
+getArguments :: Name -> State (Env, [TypedFun]) [Type]
+getArguments name =
+  do
+    (_, functions) <- get
+    return
+      ( case lookup name functions of
+          Just (Sig args _) -> args
+          Nothing -> []
+      )
+
+--
 checkProgramTypes = undefined
 
 checkProgram :: Program -> Checked
