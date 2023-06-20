@@ -23,6 +23,7 @@ jobs:
       - run: rm -rf ./localtests/*
       - run: cp -r tests/*.fun localtests
       - run: echo "📁 The tests have been copied to the runner."
+      - run: ls localtests
       - uses: haskell/actions/setup@v2
         with:
           ghc-version: "9.2.5"
@@ -55,6 +56,7 @@ jobs:
       - run: rm -rf ./localtests/*
       - run: cp -r tests/*.fun localtests
       - run: echo "📁 The tests have been copied to the runner."
+      - run: ls localtests
       - uses: haskell/actions/setup@v2
         with:
           ghc-version: "9.2.5"
