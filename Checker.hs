@@ -52,20 +52,41 @@ instance Show Error where
   show (Expected ty ty') =
     "Expected: " ++ show ty ++ " Actual: " ++ show ty'
 
--- 2.1 Repeticion de nombres
+-- General utilities
+getResult :: [a] -> Either [a] ()
+getResult errors = case errors of
+  [] -> Right ()
+  _ -> Left errors
 
-checkRepeated :: [Name] -> [Error]
+-- 2.1 Repeticion de nombres
 checkRepeated = map Duplicated . foldl (\acc name -> if name `elem` acc then acc ++ [name] else acc) []
 
 checkRepeatedNames :: [FunDef] -> Either [Error] ()
 checkRepeatedNames funcs =
   let repeatedFunctions = checkRepeated $ map (\(FunDef (name, _) _ _) -> name) funcs
       repeatedArguments = concatMap (\(FunDef _ args _) -> checkRepeated args) funcs
-   in case (repeatedFunctions ++ repeatedArguments) of
+   in case repeatedFunctions ++ repeatedArguments of
         [] -> Right ()
         errors -> Left errors
 
+-- 2.2 Number of parameters
+
+checkParameterNumber :: [FunDef] -> Either [Error] ()
+checkParameterNumber funcs =
+  getResult $
+    mapMaybe
+      ( \(FunDef (name, Sig argTypes _) argNames _) ->
+          let actual = length argNames
+              expected = length argTypes
+           in if actual /= expected
+                then Just $ ArgNumDef name actual expected
+                else Nothing
+      )
+      funcs
+
 checkProgram :: Program -> Checked
-checkProgram =
-  do
-    checkRepeatedNames
+checkProgram prog@(Program defs main) = case do
+  checkRepeatedNames defs
+  checkParameterNumber defs of
+  Right _ -> Ok
+  Left errors -> Wrong errors
