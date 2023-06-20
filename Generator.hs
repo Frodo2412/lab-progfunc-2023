@@ -19,23 +19,17 @@ import Syntax
 translateName :: Name -> String
 translateName name = "_" ++ name
 
-translateType :: Type -> String
-translateType TyInt = "int"
-translateType TyBool = "int"
-
-translateOperator :: Expr -> String
-translateOperator (Infix op _ _) =
-  case op of
-    Add -> " + "
-    Sub -> " - "
-    Mult -> " * "
-    Div -> " / "
-    Eq -> "=="
-    NEq -> "!="
-    GTh -> ">"
-    LTh -> "<"
-    GEq -> ">="
-    LEq -> "<="
+translateOperator op = case op of
+  Add -> " + "
+  Sub -> " - "
+  Mult -> " * "
+  Div -> " / "
+  Eq -> "=="
+  NEq -> "!="
+  GTh -> ">"
+  LTh -> "<"
+  GEq -> ">="
+  LEq -> "<="
 
 translateExpr :: Expr -> State [String] String
 translateExpr (Var name) = return $ translateName name
@@ -45,7 +39,7 @@ translateExpr (Infix op e1 e2) =
   do
     translatedLeft <- translateExpr e1
     translatedRight <- translateExpr e2
-    let translatedOperator = translateOperator (Infix op e1 e2)
+    let translatedOperator = translateOperator op
     return ("(" ++ translatedLeft ++ translatedOperator ++ translatedRight ++ ")")
 translateExpr (If condition thenExpr elseExpr) =
   do
@@ -70,12 +64,11 @@ translateLet (Let (varName, _type) expr body) =
     translatedBody <- translateExpr body
     newCount <- gets length
     let translatedVarName = translateName varName
-    let translatedType = translateType _type
     reversedLets <- gets reverse
     let diff = take (newCount - letCount) reversedLets
     let translatedLet = case diff of
-          [] -> "int " ++ "_let" ++ show newCount ++ "(" ++ translatedType ++ " " ++ translatedVarName ++ "){\nreturn (" ++ translatedBody ++ "); };\n"
-          functions -> "int " ++ "_let" ++ show newCount ++ "(" ++ translatedType ++ " " ++ translatedVarName ++ "){\n" ++ concat functions ++ "return (" ++ translatedBody ++ "); };\n"
+          [] -> "int _let" ++ show newCount ++ "(int " ++ translatedVarName ++ "){\nreturn (" ++ translatedBody ++ "); };\n"
+          functions -> "int _let" ++ show newCount ++ "(int " ++ translatedVarName ++ "){\n" ++ concat functions ++ "return (" ++ translatedBody ++ "); };\n"
     _ <- put (drop (newCount - letCount) reversedLets)
     _ <- modify (\s -> s ++ [translatedLet])
     return newCount
@@ -83,10 +76,9 @@ translateLet (Let (varName, _type) expr body) =
 translateFunction :: FunDef -> String
 translateFunction (FunDef (name, Sig params returnType) args body) =
   let translatedName = translateName name
-      translatedParams = zipWith (\name _y -> translateType _y ++ " " ++ translateName name) args params
-      translatedReturnType = translateType returnType
+      translatedParams = zipWith (\name _y -> "int " ++ translateName name) args params
       (translatedBody, localFunctions) = runState (translateExpr body) []
-   in translatedReturnType ++ " " ++ translatedName ++ "(" ++ intercalate "," translatedParams ++ "){\n" ++ concat localFunctions ++ "return (" ++ translatedBody ++ "); };\n"
+   in "int " ++ translatedName ++ "(" ++ intercalate "," translatedParams ++ "){\n" ++ concat localFunctions ++ "return (" ++ translatedBody ++ "); };\n"
 
 genProgram :: Program -> String
 genProgram (Program defs expr) =
