@@ -12,8 +12,8 @@ module Checker where
 -- se pueden agregar mas importaciones
 -- en caso de ser necesario
 
-import Control.Monad.State
 import Control.Monad (zipWithM)
+import Control.Monad.State
 import Data.List
 import Data.Maybe
 import Syntax
@@ -216,11 +216,15 @@ checkType (Infix op left right) expected = case op of
 --
 checkType (If cond thenExpr elseExpr) expected =
   do
-    trueType <- typeOf thenExpr
-    condErrors <- checkType cond TyBool
-    thenErrors <- checkType thenExpr trueType
-    elseErrors <- checkType elseExpr trueType
-    return ([Expected expected trueType | expected /= trueType] ++ condErrors ++ thenErrors ++ elseErrors)
+    thenType <- typeOf thenExpr
+    condType <- typeOf cond
+    elseType <- typeOf elseExpr
+    condErrors <- checkType cond condType
+    thenErrors <- checkType thenExpr thenType
+    elseErrors <- checkType elseExpr elseType
+    let localErrors = [Expected expected thenType | expected /= thenType] ++ [Expected TyBool condType | condType /= TyBool] ++ [Expected thenType elseType | thenType /= elseType]
+    let nestedErrors = condErrors ++ thenErrors ++ elseErrors
+    return (localErrors ++ nestedErrors)
 --
 checkType (Let inner@(name, innerType) innerExpr outerExpr) expected =
   do
