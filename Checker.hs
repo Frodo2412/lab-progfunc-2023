@@ -262,7 +262,7 @@ checkComparisonOperator left right expected =
 checkNumberOfArguments (App name exprs) args =
   let actualLength = length exprs
       expectedLength = length args
-   in [ArgNumApp name actualLength expectedLength | actualLength /= expectedLength]
+   in [ArgNumApp name expectedLength actualLength | actualLength /= expectedLength]
 
 checkArgumentTypes (App name exprs) args =
   do
