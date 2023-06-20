@@ -61,9 +61,6 @@ instance Show Error where
   show (Expected ty ty') =
     "Expected: " ++ show ty ++ " Actual: " ++ show ty'
 
-getDefs :: Program -> Defs
-getDefs (Program defs _) = defs
-
 -- 2.1 Repeticion de nombres
 
 checkRepeatedFunctions :: Defs -> Checked
@@ -318,10 +315,10 @@ checkProgramTypes (Program defs expr) =
         errors -> Left errors
 
 checkProgram :: Program -> Checked
-checkProgram program =
+checkProgram program@(Program defs _) =
   case do
-    _ <- checkDefinitions $ getDefs program
-    _ <- checkNumberOfParameters $ getDefs program
+    _ <- checkDefinitions defs
+    _ <- checkNumberOfParameters defs
     _ <- checkNamesDefinedProgram program
     _ <- checkProgramTypes program
     return () of
