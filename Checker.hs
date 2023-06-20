@@ -12,7 +12,7 @@ module Checker where
 -- se pueden agregar mas importaciones
 -- en caso de ser necesario
 
-import Control.Monad.State
+import Control.Monad
 import Data.List
 import Data.Maybe
 import Syntax
