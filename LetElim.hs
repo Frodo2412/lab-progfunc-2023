@@ -10,45 +10,36 @@
 
 module LetElim where
 
-import Data.List
 import Syntax
 
+-- e[c/x] sustituye todas las ocurrencias de x en e por c, "sustituye x por c en e"
 subst :: Name -> Expr -> Expr -> Expr
-subst name e1 e2 = case e2 of
-  Var name2 -> if name == name2 then e1 else e2
-  Infix op e21 e22 -> Infix op (subst name e1 e21) (subst name e1 e22)
-  If e21 e22 e23 -> If (subst name e1 e21) (subst name e1 e22) (subst name e1 e23)
-  Let (name2, e21) e22 e23 -> if name == name2 then Let (name2, e21) e22 e23 else Let (name2, e21) (subst name e1 e22) (subst name e1 e23)
-  App funcName args -> App funcName (map (subst name e1) args)
-  IntLit x -> IntLit x
-  BoolLit b -> BoolLit b
-
-makePass :: Expr -> (Bool, Expr) -- (changed, expr)
-makePass s@(Let (name, t) e1 e2) = case e1 of
-  IntLit _ -> (True, subst name e1 e2)
-  BoolLit _ -> (True, subst name e1 e2)
-  _ ->
-    let (changed1, e11) = makePass e1
-        (changed2, e22) = makePass e2
-     in (changed1 || changed2, Let (name, t) e11 e22)
-makePass s@(Infix op e1 e2) =
-  let (changed1, e11) = makePass e1
-      (changed2, e22) = makePass e2
-   in (changed1 || changed2, Infix op e11 e22)
-makePass s@(If e1 e2 e3) =
-  let (changed1, e11) = makePass e1
-      (changed2, e22) = makePass e2
-      (changed3, e33) = makePass e3
-   in (changed1 || changed2 || changed3, If e11 e22 e33)
-makePass s@(App funcName args) =
-  let (changed, args1) = mapAccumL (\changed arg -> let (changed1, arg1) = makePass arg in (changed || changed1, arg1)) False args
-   in (changed, App funcName args1)
-makePass s = (False, s)
+subst variable literal expr = case expr of
+  Var name ->
+    if variable == name then literal else expr
+  Infix op left right ->
+    Infix op (subst variable literal left) (subst variable literal right)
+  If cond thenExpr elseExpr ->
+    If (subst variable literal cond) (subst variable literal thenExpr) (subst variable literal elseExpr)
+  Let inner@(boundVariable, _) innerExpr outerExpr ->
+    if variable == boundVariable
+      then Let inner innerExpr outerExpr
+      else Let inner (subst variable literal innerExpr) (subst variable literal outerExpr)
+  App funcName args -> App funcName (map (subst variable literal) args)
+  _ -> expr
 
 letElim :: Expr -> Expr
-letElim e =
-  let (changed, e1) = makePass e
-   in if changed then letElim e1 else e1
+letElim (Let inner@(boundVariable, _) innerExpr outerExpr) =
+  let optInner = letElim innerExpr
+      optOuter = letElim outerExpr
+   in case optInner of
+        IntLit _ -> subst boundVariable optInner optOuter
+        BoolLit _ -> subst boundVariable optInner optOuter
+        _ -> Let inner optInner optOuter
+letElim (Infix op left right) = Infix op (letElim left) (letElim right)
+letElim (If cond thenExpr elseExpr) = If (letElim cond) (letElim thenExpr) (letElim elseExpr)
+letElim (App name args) = App name (map letElim args)
+letElim e = e
 
 letElimP :: Program -> Program
 letElimP (Program defs expr) =
