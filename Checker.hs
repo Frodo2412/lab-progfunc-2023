@@ -163,7 +163,7 @@ typeOf (Var name) = do
   (variables, _) <- get
   case lookup name variables of
     Just ty -> return ty
-    Nothing -> error ("Function not in environment " ++ name)
+    Nothing -> error ("Variable not in environment " ++ name)
 typeOf (IntLit _) = return TyInt
 --
 typeOf (BoolLit _) = return TyBool
@@ -223,9 +223,9 @@ checkType (If cond thenExpr elseExpr) expected =
 --
 checkType (Let inner@(name, innerType) innerExpr outerExpr) expected =
   do
-    trueType <- typeOf outerExpr
     innerErrors <- checkType innerExpr innerType
-    _ <- modify (\(v, f) -> (inner : v, f))
+    _ <- modify (\(v, f) -> (inner : filter ((/=name) . fst) v, f))
+    trueType <- typeOf outerExpr
     outerErrors <- checkType outerExpr trueType
     return ([Expected expected trueType | expected /= trueType] ++ innerErrors ++ outerErrors)
 --
