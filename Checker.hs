@@ -163,8 +163,7 @@ typeOf (Var name) = do
   (variables, _) <- get
   case lookup name variables of
     Just ty -> return ty
-    Nothing -> error "Undefined variable"
---
+    Nothing -> error ("Function not in environment " ++ name)
 typeOf (IntLit _) = return TyInt
 --
 typeOf (BoolLit _) = return TyBool
@@ -177,7 +176,7 @@ typeOf (App name _) = do
   (_, functions) <- get
   case lookup name functions of
     Just (Sig _ ret) -> return ret
-    Nothing -> error ("Undefined variable " ++ name)
+    Nothing -> error ("Function not in environment " ++ name)
 --
 typeOf (Infix op _ _) = return (typeOfOp op)
 
