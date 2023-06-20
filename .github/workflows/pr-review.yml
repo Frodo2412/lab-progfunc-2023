@@ -23,6 +23,8 @@ jobs:
       - run: rm -rf ./localtests/*
       - run: cp -r tests/*.fun localtests
       - run: echo "📁 The tests have been copied to the runner."
+      - uses: actions/checkout@v2
+      - uses: actions/setup-haskell@v1.1
       - run: echo "Running normal tests..."
       - run: echo "Test ${{ matrix.normal-tests }}..."
       - run: runHaskell Compiler.hs -o localtests/ejemplo${{ matrix.normal-tests }}
@@ -52,6 +54,8 @@ jobs:
       - run: rm -rf ./localtests/*
       - run: cp -r tests/*.fun localtests
       - run: echo "📁 The tests have been copied to the runner."
+      - uses: actions/checkout@v2
+      - uses: actions/setup-haskell@v1.1
       - run: echo "Running error tests..."
       - run: echo "Test ${{ matrix.error-tests }}..."
       - run: runHaskell Compiler.hs -o localtests/ejemplo${{ matrix.error-tests }}
