@@ -308,7 +308,6 @@ checkProgram program@(Program defs _) =
     _ <- checkDefinitions defs
     _ <- checkNumberOfParameters defs
     _ <- checkNamesDefinedProgram program
-    _ <- checkProgramTypes program
-    return () of
+    checkProgramTypes program of
     Right _ -> Ok
     Left errors -> Wrong errors
