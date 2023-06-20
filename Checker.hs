@@ -276,7 +276,27 @@ getArguments name =
       )
 
 --
-checkProgramTypes = undefined
+checkFunction (FunDef (name, Sig argTypes retType) argNames expr) =
+  do
+    _ <- modify (\(vars, funcs) -> (vars ++ zip argNames argTypes, funcs))
+    checkType expr retType
+
+checkMain expr =
+  do
+    trueType <- typeOf expr
+    checkType expr trueType
+
+--
+checkProgramTypes :: Program -> Either [Error] ()
+checkProgramTypes (Program defs expr) =
+  let functions = map (\(FunDef def _ _) -> def) defs
+      vars = []
+      initialState = (vars, functions)
+      functionErrors = concatMap (fst . flip runState initialState . checkFunction) defs
+      mainErrors = undefined
+   in case functionErrors ++ mainErrors of
+        [] -> Right ()
+        errors -> Left errors
 
 checkProgram :: Program -> Checked
 checkProgram program =
