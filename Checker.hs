@@ -15,8 +15,18 @@ module Checker where
 import Control.Monad.State
 import Data.List
 import Data.Maybe
-import Foreign.C (errnoToIOError)
 import Syntax
+  ( Defs,
+    Env,
+    Expr (..),
+    FunDef (..),
+    Name,
+    Op (..),
+    Program (..),
+    Sig (Sig),
+    Type (..),
+    TypedFun,
+  )
 
 -- CHECKER
 
@@ -208,6 +218,15 @@ checkType :: Expr -> Type -> State (Env, [TypedFun]) [Error]
 --
 checkType (Infix op left right) expected = case op of
   Add -> checkArithmeticOperator left right expected
+  Sub -> checkArithmeticOperator left right expected
+  Mult -> checkArithmeticOperator left right expected
+  Div -> checkArithmeticOperator left right expected
+  Eq -> checkComparisonOperator left right expected
+  NEq -> checkComparisonOperator left right expected
+  GTh -> checkComparisonOperator left right expected
+  LTh -> checkComparisonOperator left right expected
+  GEq -> checkComparisonOperator left right expected
+  LEq -> checkComparisonOperator left right expected
 --
 checkType (If cond thenExpr elseExpr) expected =
   do
@@ -293,7 +312,7 @@ checkProgramTypes (Program defs expr) =
       vars = []
       initialState = (vars, functions)
       functionErrors = concatMap (fst . flip runState initialState . checkFunction) defs
-      mainErrors = undefined
+      mainErrors = evalState (checkMain expr) initialState
    in case functionErrors ++ mainErrors of
         [] -> Right ()
         errors -> Left errors
