@@ -14,6 +14,7 @@ module Checker where
 -- en caso de ser necesario
 
 import Control.Monad (zipWithM)
+import Control.Monad.Reader
 import Control.Monad.State
 import Data.List
 import Data.Maybe
@@ -58,7 +59,7 @@ getResult errors = case errors of
   [] -> Right ()
   _ -> Left errors
 
--- 2.1 Repeticion de nombres
+-- 2.1 Repeated names
 checkRepeated = map Duplicated . foldl (\acc name -> if name `elem` acc then acc ++ [name] else acc) []
 
 checkRepeatedNames :: [FunDef] -> Either [Error] ()
@@ -84,9 +85,50 @@ checkParameterNumber funcs =
       )
       funcs
 
+-- 2.3 Undeclared names
+checkUndeclaredInExpr (Var name) = do
+  env <- ask
+  if name `elem` env
+    then return []
+    else return [Undefined name]
+checkUndeclaredInExpr (IntLit _) = return []
+checkUndeclaredInExpr (BoolLit _) = return []
+checkUndeclaredInExpr (Infix _ e1 e2) = do
+  errors1 <- checkUndeclaredInExpr e1
+  errors2 <- checkUndeclaredInExpr e2
+  return $ errors1 ++ errors2
+checkUndeclaredInExpr (If e1 e2 e3) = do
+  errors1 <- checkUndeclaredInExpr e1
+  errors2 <- checkUndeclaredInExpr e2
+  errors3 <- checkUndeclaredInExpr e3
+  return $ errors1 ++ errors2 ++ errors3
+checkUndeclaredInExpr (Let (name, _) e1 e2) = do
+  errors1 <- checkUndeclaredInExpr e1
+  errors2 <- local (name :) $ checkUndeclaredInExpr e2
+  return $ errors1 ++ errors2
+checkUndeclaredInExpr (App name args) = do
+  env <- ask
+  errors <- mapM checkUndeclaredInExpr args
+  if name `elem` env
+    then return $ concat errors
+    else return $ Undefined name : concat errors
+
+checkUndeclaredNames :: Program -> Either [Error] ()
+checkUndeclaredNames (Program funcs main) =
+  getResult $
+    concatMap
+      ( \(FunDef _ names expr) ->
+          runReader (checkUndeclaredInExpr expr) names
+      )
+      funcs
+      ++ runReader (checkUndeclaredInExpr main) []
+
+--
+
 checkProgram :: Program -> Checked
 checkProgram prog@(Program defs main) = case do
   checkRepeatedNames defs
-  checkParameterNumber defs of
+  checkParameterNumber defs
+  checkUndeclaredNames prog of
   Right _ -> Ok
   Left errors -> Wrong errors
