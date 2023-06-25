@@ -7,17 +7,18 @@
 -- o la lista de errores encontrados en otro caso.
 ----------------------------------------------------------------------------
 {-# LANGUAGE DataKinds #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+
+{-# HLINT ignore "Use first" #-}
 
 module Checker where
 
 -- se pueden agregar mas importaciones
 -- en caso de ser necesario
 
-import Control.Arrow (ArrowChoice (left, right))
-import Control.Concurrent.STM (check)
 import Control.Monad (zipWithM)
 import Control.Monad.Reader
-import Control.Monad.State
+import Control.Monad.Writer
 import Data.List
 import Data.Maybe
 import Syntax
@@ -124,58 +125,77 @@ checkUndeclaredNames (Program funcs main) =
       funcs
       ++ runReader (checkUndeclaredInExpr main) []
 
--- 2.4 Type Checking
+-- 2.4 Type Checking (Ahora que lo veo esto podria ser un writer monad)
 checkProgramType :: Program -> Either [Error] ()
 checkProgramType (Program defs main) = undefined
 
-checkExprType (IntLit _) = lift $ checkLiteral TyInt
-checkExprType (BoolLit _) = lift $ checkLiteral TyBool
+checkExprType :: Expr -> ReaderT (Env, [FunDef]) (Writer [Error]) Type
+checkExprType (IntLit _) = return TyInt
+checkExprType (BoolLit _) = return TyBool
 checkExprType (Var name) =
   do
-    vars <- ask
-    let actual = name `lookup` vars
-    _ <- maybe get put actual
-    return []
+    varType <- asks $ (name `lookup`) . fst
+    return $ fromMaybe (error ("Undeclared variable " ++ name)) varType
 checkExprType (Infix op left right) =
   ( case op of
       Add -> checkArithmeticOperator
       Sub -> checkArithmeticOperator
       Mult -> checkArithmeticOperator
       Div -> checkArithmeticOperator
-      Eq -> checkEqualityOperator
-      NEq -> checkEqualityOperator
-      GTh -> checkEqualityOperator
-      LTh -> checkEqualityOperator
-      GEq -> checkArithmeticOperator
-      LEq -> checkEqualityOperator
+      Eq -> checkComparissonOperator
+      NEq -> checkComparissonOperator
+      GTh -> checkComparissonOperator
+      LTh -> checkComparissonOperator
+      GEq -> checkComparissonOperator
+      LEq -> checkComparissonOperator
   )
-    op
     left
     right
 checkExprType (If cond thenExpr elseExpr) =
   do
-    thenErrors <- checkExprType thenExpr
-    thenType <- get
-    elseErrors <- checkExprType elseExpr
-    elseType <- get
-    condErrors <- checkExprType cond
-    condType <- get
-    _ <- put thenType
+    elseType <- checkExprType elseExpr
+    thenType <- checkExprType thenExpr
+    condType <- checkExprType cond
     let localErrors = [Expected TyBool condType | condType /= TyBool] ++ [Expected thenType elseType | thenType /= elseType]
-    let nestedErrors = condErrors ++ thenErrors ++ elseErrors
-    return $ localErrors ++ nestedErrors
-checkExprType (Let var inner outer) = undefined
-checkExprType App = undefined
-
-checkLiteral :: Type -> State Type [Error]
-checkLiteral actual =
+    tell localErrors
+    return thenType
+checkExprType (Let var@(name, _type) inner outer) =
   do
-    _ <- put actual
-    return []
+    outerType <- local (\(vars, defs) -> (var : vars, defs)) $ checkExprType outer
+    innerType <- checkExprType inner
+    tell ([Expected _type innerType | _type /= innerType])
+    return outerType
+checkExprType (App name args) = undefined
 
-checkArithmeticOperator :: Op -> Expr -> Expr -> ReaderT Env (State Type) [Error]
-checkEqualityOperator :: Op -> Expr -> Expr -> ReaderT Env (State Type) [Error]
---
+-- do
+--   actualTypes <- mapM checkExprType args
+--   defs <- asks snd
+--   let (Sig expectedTypes returnType) = fromMaybe (error "Function not defined " ++ name) (lookup name defs)
+--   let argErrors = checkArguments expectedTypes actualTypes
+--   let lengthError =
+--         let actual = length args
+--             expected = length argTypes
+--          in [ArgNumApp actual expected | actual /= expected]
+--   _ <- modify ((lengthError ++ argErrors) ++)
+--   return returnType
+
+checkArithmeticOperator left right =
+  do
+    rightType <- checkExprType right
+    leftType <- checkExprType left
+    let localErrors = [Expected TyInt leftType | leftType /= TyInt] ++ [Expected TyInt rightType | rightType /= TyInt]
+    tell localErrors
+    return TyInt
+
+checkComparissonOperator left right =
+  do
+    rightType <- checkExprType right
+    leftType <- checkExprType left
+    tell [Expected leftType rightType | leftType /= rightType]
+    return TyBool
+
+checkArguments expected actual = concat $ zipWithM (\a e -> [Expected e a | e /= a]) expected actual
+
 checkProgram :: Program -> Checked
 checkProgram prog@(Program defs main) = case do
   checkRepeatedNames defs
