@@ -6,14 +6,18 @@
 -- que representa un programa, retorna Ok en caso de no encontrar errores,
 -- o la lista de errores encontrados en otro caso.
 ----------------------------------------------------------------------------
+{-# LANGUAGE DataKinds #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+
+{-# HLINT ignore "Use first" #-}
 
 module Checker where
 
 -- se pueden agregar mas importaciones
 -- en caso de ser necesario
 
-import Control.Monad (zipWithM)
-import Control.Monad.State
+import Control.Monad.Reader
+import Control.Monad.Writer
 import Data.List
 import Data.Maybe
 import Syntax
@@ -51,268 +55,145 @@ instance Show Error where
   show (Expected ty ty') =
     "Expected: " ++ show ty ++ " Actual: " ++ show ty'
 
--- 2.1 Repeticion de nombres
+-- General utilities
+getResult :: [a] -> Either [a] ()
+getResult errors = case errors of
+  [] -> Right ()
+  _ -> Left errors
 
-checkRepeatedFunctions :: Defs -> Checked
-checkRepeatedFunctions defs =
-  case foldl
-    ( \(found, repeated) (FunDef typedFun _ _) ->
-        let functionName = fst typedFun
-         in if functionName `elem` found
-              then (found, repeated ++ [functionName])
-              else (functionName : found, repeated)
-    )
-    ([], [])
-    defs of
-    (_, []) -> Ok
-    (_, repeated) -> Wrong (map Duplicated repeated)
+-- 2.1 Repeated names
+checkRepeated = map Duplicated . foldl (\acc name -> if name `elem` acc then acc ++ [name] else acc) []
 
-checkRepeatedArgumentsSingleFunction :: FunDef -> [Name]
-checkRepeatedArgumentsSingleFunction (FunDef _ args _) =
-  snd
-    ( foldl
-        ( \(found, repeated) arg ->
-            if arg `elem` found
-              then (found, repeated ++ [arg])
-              else (arg : found, repeated)
-        )
-        ([], [])
-        args
-    )
+checkRepeatedNames :: [FunDef] -> Either [Error] ()
+checkRepeatedNames funcs =
+  getResult $
+    let repeatedFunctions = checkRepeated $ map (\(FunDef (name, _) _ _) -> name) funcs
+        repeatedArguments = concatMap (\(FunDef _ args _) -> checkRepeated args) funcs
+     in repeatedFunctions ++ repeatedArguments
 
-checkRepeatedArguments :: Defs -> Either [Error] ()
-checkRepeatedArguments defs =
-  case concatMap checkRepeatedArgumentsSingleFunction defs of
-    [] -> Right ()
-    errors -> Left (map Duplicated errors)
+-- 2.2 Number of parameters
 
-checkDefinitions :: Defs -> Either [Error] ()
-checkDefinitions defs = case checkRepeatedFunctions defs of
-  Ok -> checkRepeatedArguments defs
-  Wrong errors -> case checkRepeatedArguments defs of
-    Right _ -> Left errors
-    Left errors' -> Left (errors ++ errors')
-
--- 2.2 Numero de Parametros
-
-checkNumberOfParameters :: [FunDef] -> Either [Error] ()
-checkNumberOfParameters defs =
-  foldl
-    ( \acc res -> case acc of
-        Right _ -> case res of
-          Right _ -> Right ()
-          Left error -> Left [error]
-        Left errors -> case res of
-          Right _ -> Left errors
-          Left error -> Left (errors ++ [error])
-    )
-    (Right ())
-    ( map
-        ( \(FunDef (name, Sig types _) args _) ->
-            let argsLength = length args
-                typesLength = length types
-             in if argsLength == typesLength
-                  then Right ()
-                  else Left (ArgNumDef name typesLength argsLength)
-        )
-        defs
-    )
-
--- 2.3 Nombres no declarados
-
-checkNamesDefinedExpr :: FunDef -> [Name] -> [Error]
-checkNamesDefinedExpr (FunDef _ args expr) defined =
-  case expr of
-    Infix _ expr1 expr2 ->
-      checkNamesDefinedExpr (FunDef undefined args expr1) defined ++ checkNamesDefinedExpr (FunDef undefined args expr2) defined
-    If expr1 expr2 expr3 ->
-      checkNamesDefinedExpr (FunDef undefined args expr1) defined ++ checkNamesDefinedExpr (FunDef undefined args expr2) defined ++ checkNamesDefinedExpr (FunDef undefined args expr3) defined
-    Let typedVar expr1 expr2 ->
-      checkNamesDefinedExpr (FunDef undefined args expr1) defined ++ checkNamesDefinedExpr (FunDef undefined (fst typedVar : args) expr2) defined
-    App name exprs ->
-      ([Undefined name | name `notElem` defined]) ++ concatMap (\expr -> checkNamesDefinedExpr (FunDef undefined args expr) defined) exprs
-    Var name -> ([Undefined name | name `notElem` args])
-    IntLit _ -> []
-    BoolLit _ -> []
-
-checkNamesDefined :: Defs -> ([Error], [Name])
-checkNamesDefined =
-  foldl
-    ( \(errors, defined) (FunDef typedFun args expr) ->
-        let newNamesDefined = fst typedFun : defined
-         in (errors ++ checkNamesDefinedExpr (FunDef typedFun args expr) newNamesDefined, newNamesDefined)
-    )
-    ([], [])
-
-checkNamesDefinedExprs :: [Name] -> Expr -> [Error]
-checkNamesDefinedExprs defined expr =
-  checkNamesDefinedExpr (FunDef undefined defined expr) defined
-
-checkNamesDefinedProgram :: Program -> Either [Error] ()
-checkNamesDefinedProgram (Program definitions expression) =
-  let (errors, defined) = checkNamesDefined definitions
-   in case checkNamesDefinedExprs defined expression of
-        [] -> Right ()
-        errors' -> Left (errors ++ errors')
-
--- 2.4 Chequeo de tipos
-
--- Retorna el tipo de la expresion
-typeOf :: Expr -> State (Env, [TypedFun]) Type
---
-typeOf (Var name) = do
-  (variables, _) <- get
-  case lookup name variables of
-    Just ty -> return ty
-    Nothing -> error ("Variable not in environment " ++ name)
-typeOf (IntLit _) = return TyInt
---
-typeOf (BoolLit _) = return TyBool
---
-typeOf (If _ expr _) = typeOf expr
---
-typeOf (Let _ _ expr) = typeOf expr
---
-typeOf (App name _) = do
-  (_, functions) <- get
-  case lookup name functions of
-    Just (Sig _ ret) -> return ret
-    Nothing -> error ("Function not in environment " ++ name)
---
-typeOf (Infix op _ _) = return (typeOfOp op)
-
--- Operator utilities
-typeOfOp :: Op -> Type
-typeOfOp op = case op of
-  Add -> TyInt
-  Sub -> TyInt
-  Mult -> TyInt
-  Div -> TyInt
-  Eq -> TyBool
-  NEq -> TyBool
-  GTh -> TyBool
-  LTh -> TyBool
-  GEq -> TyBool
-  LEq -> TyBool
-
--- Function utilities
-typeOfFunc :: TypedFun -> Type
-typeOfFunc (_, Sig _ ret) = ret
-
--- Chequea el tipo de la expresion
-checkType :: Expr -> Type -> State (Env, [TypedFun]) [Error]
---
-checkType (Infix op left right) expected = case op of
-  Add -> checkArithmeticOperator left right expected
-  Sub -> checkArithmeticOperator left right expected
-  Mult -> checkArithmeticOperator left right expected
-  Div -> checkArithmeticOperator left right expected
-  Eq -> checkComparisonOperator left right expected
-  NEq -> checkComparisonOperator left right expected
-  GTh -> checkComparisonOperator left right expected
-  LTh -> checkComparisonOperator left right expected
-  GEq -> checkComparisonOperator left right expected
-  LEq -> checkComparisonOperator left right expected
---
-checkType (If cond thenExpr elseExpr) expected =
-  do
-    thenType <- typeOf thenExpr
-    condType <- typeOf cond
-    elseType <- typeOf elseExpr
-    condErrors <- checkType cond condType
-    thenErrors <- checkType thenExpr thenType
-    elseErrors <- checkType elseExpr elseType
-    let localErrors = [Expected expected thenType | expected /= thenType] ++ [Expected TyBool condType | condType /= TyBool] ++ [Expected thenType elseType | thenType /= elseType]
-    let nestedErrors = condErrors ++ thenErrors ++ elseErrors
-    return (localErrors ++ nestedErrors)
---
-checkType (Let inner@(name, innerType) innerExpr outerExpr) expected =
-  do
-    innerErrors <- checkType innerExpr innerType
-    _ <- modify (\(v, f) -> (inner : filter ((/= name) . fst) v, f))
-    trueType <- typeOf outerExpr
-    outerErrors <- checkType outerExpr trueType
-    return ([Expected expected trueType | expected /= trueType] ++ innerErrors ++ outerErrors)
---
-checkType func@(App name args) expected =
-  do
-    actual <- typeOf func
-    args <- getArguments name
-    let argNumbAppError = checkNumberOfArguments func args
-    argTypeErrors <- checkArgumentTypes func args
-    return ([Expected expected actual | expected /= actual] ++ argNumbAppError ++ argTypeErrors)
--- Covers var and literals
-checkType expr expected =
-  do
-    actual <- typeOf expr
-    return ([Expected expected actual | expected /= actual])
-
--- Operator utility functions
-checkArithmeticOperator :: Expr -> Expr -> Type -> State (Env, [TypedFun]) [Error]
-checkArithmeticOperator left right expected =
-  do
-    leftErrors <- checkType left TyInt
-    rightErrors <- checkType right TyInt
-    return ([Expected expected TyInt | expected /= TyInt] ++ leftErrors ++ rightErrors)
-
-checkComparisonOperator :: Expr -> Expr -> Type -> State (Env, [TypedFun]) [Error]
-checkComparisonOperator left right expected =
-  do
-    trueType <- typeOf left
-    leftErrors <- checkType left trueType
-    rightErrors <- checkType right trueType
-    return ([Expected expected TyBool | expected /= TyBool] ++ leftErrors ++ rightErrors)
-
--- Function utility functions
-checkNumberOfArguments (App name exprs) args =
-  let actualLength = length exprs
-      expectedLength = length args
-   in [ArgNumApp name expectedLength actualLength | actualLength /= expectedLength]
-
-checkArgumentTypes (App name exprs) args =
-  do
-    errors <- zipWithM checkType exprs args
-    return (concat errors)
-
-getArguments :: Name -> State (Env, [TypedFun]) [Type]
-getArguments name =
-  do
-    (_, functions) <- get
-    return
-      ( case lookup name functions of
-          Just (Sig args _) -> args
-          Nothing -> []
+checkParameterNumber :: [FunDef] -> Either [Error] ()
+checkParameterNumber funcs =
+  getResult $
+    mapMaybe
+      ( \(FunDef (name, Sig argTypes _) argNames _) ->
+          let actual = length argNames
+              expected = length argTypes
+           in if actual /= expected
+                then Just $ ArgNumDef name actual expected
+                else Nothing
       )
+      funcs
 
---
-checkFunction (FunDef (name, Sig argTypes retType) argNames expr) =
+-- 2.3 Undeclared names
+checkUndeclaredInExpr (Var name) = do
+  env <- ask
+  if name `elem` env
+    then return []
+    else return [Undefined name]
+checkUndeclaredInExpr (IntLit _) = return []
+checkUndeclaredInExpr (BoolLit _) = return []
+checkUndeclaredInExpr (Infix _ e1 e2) = do
+  errors1 <- checkUndeclaredInExpr e1
+  errors2 <- checkUndeclaredInExpr e2
+  return $ errors1 ++ errors2
+checkUndeclaredInExpr (If e1 e2 e3) = do
+  errors1 <- checkUndeclaredInExpr e1
+  errors2 <- checkUndeclaredInExpr e2
+  errors3 <- checkUndeclaredInExpr e3
+  return $ errors1 ++ errors2 ++ errors3
+checkUndeclaredInExpr (Let (name, _) e1 e2) = do
+  errors1 <- checkUndeclaredInExpr e1
+  errors2 <- local (name :) $ checkUndeclaredInExpr e2
+  return $ errors1 ++ errors2
+checkUndeclaredInExpr (App name args) = do
+  env <- ask
+  errors <- mapM checkUndeclaredInExpr args
+  if name `elem` env
+    then return $ concat errors
+    else return $ Undefined name : concat errors
+
+checkUndeclaredNames :: Program -> Either [Error] ()
+checkUndeclaredNames (Program funcs main) =
+  getResult $
+    concatMap
+      ( \(FunDef _ names expr) ->
+          runReader (checkUndeclaredInExpr expr) names
+      )
+      funcs
+      ++ runReader (checkUndeclaredInExpr main) []
+
+-- 2.4 Type Checking (Ahora que lo veo esto podria ser un writer monad)
+checkProgramType :: Program -> Either [Error] ()
+checkProgramType (Program defs main) =
+  getResult $
+    let funcEnv = map (\FunDef def _ _ -> def) defs
+        functionErrors = concatMap (\FunDef _ args expr -> ())
+        mainErrors = runReaderT checkExprType main []
+     in Right ()
+
+checkExprType :: Expr -> ReaderT (Env, [TypedFun]) (Writer [Error]) Type
+checkExprType (IntLit _) = return TyInt
+checkExprType (BoolLit _) = return TyBool
+checkExprType (Var name) =
   do
-    _ <- modify (\(vars, funcs) -> (vars ++ zip argNames argTypes, funcs))
-    checkType expr retType
-
-checkMain expr =
+    varType <- asks $ (name `lookup`) . fst
+    return $ fromMaybe (error ("Undeclared variable " ++ name)) varType
+checkExprType (Infix op left right) =
   do
-    trueType <- typeOf expr
-    checkType expr trueType
+    rightType <- checkExprType right
+    leftType <- checkExprType left
+    case op of
+      Add -> checkArithmeticOperator
+      Sub -> checkArithmeticOperator
+      Mult -> checkArithmetiÍcOperator
+      Div -> checkArithmeticOperator
+      Eq -> checkComparissonOperator
+      NEq -> checkComparissonOperator
+      GTh -> checkComparissonOperator
+      LTh -> checkComparissonOperator
+      GEq -> checkComparissonOperator
+      LEq -> checkComparissonOperator
+      $ leftType rightType
+checkExprType (If cond thenExpr elseExpr) =
+  do
+    elseType <- checkExprType elseExpr
+    thenType <- checkExprType thenExpr
+    condType <- checkExprType cond
+    tell $ [Expected TyBool condType | condType /= TyBool] ++ [Expected thenType elseType | thenType /= elseType]
+    return thenType
+checkExprType (Let var@(name, _type) inner outer) =
+  do
+    outerType <- local (\(vars, defs) -> (var : vars, defs)) $ checkExprType outer
+    innerType <- checkExprType inner
+    tell ([Expected _type innerType | _type /= innerType])
+    return outerType
+checkExprType (App name args) = do
+  actualTypes <- mapM checkExprType args
+  maybeFunc <- asks $ lookup name . snd
+  let (Sig expectedTypes returnType) = fromMaybe (error ("Undeclared variable " ++ name)) maybeFunc
+  tell $
+    let expected = length expectedTypes
+        actual = length actualTypes
+     in [ArgNumApp name actual expected | actual /= expected]
+  tell $ concat $ zipWithM (\a e -> [Expected e a | e /= a]) expectedTypes actualTypes
+  return returnType
 
---
-checkProgramTypes :: Program -> Either [Error] ()
-checkProgramTypes (Program defs expr) =
-  let functions = map (\(FunDef def _ _) -> def) defs
-      vars = []
-      initialState = (vars, functions)
-      functionErrors = concatMap (fst . flip runState initialState . checkFunction) defs
-      mainErrors = evalState (checkMain expr) initialState
-   in case functionErrors ++ mainErrors of
-        [] -> Right ()
-        errors -> Left errors
+checkArithmeticOperator leftType rightType =
+  do
+    tell $ [Expected TyInt leftType | leftType /= TyInt] ++ [Expected TyInt rightType | rightType /= TyInt]
+    return TyInt
+
+checkComparissonOperator leftType rightType =
+  do
+    tell [Expected leftType rightType | leftType /= rightType]
+    return TyBool
 
 checkProgram :: Program -> Checked
-checkProgram program@(Program defs _) =
-  case do
-    _ <- checkDefinitions defs
-    _ <- checkNumberOfParameters defs
-    _ <- checkNamesDefinedProgram program
-    checkProgramTypes program of
-    Right _ -> Ok
-    Left errors -> Wrong errors
+checkProgram prog@(Program defs main) = case do
+  checkRepeatedNames defs
+  checkParameterNumber defs
+  checkUndeclaredNames prog of
+  Right _ -> Ok
+  Left errors -> Wrong errors
