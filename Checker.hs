@@ -126,7 +126,12 @@ checkUndeclaredNames (Program funcs main) =
 
 -- 2.4 Type Checking (Ahora que lo veo esto podria ser un writer monad)
 checkProgramType :: Program -> Either [Error] ()
-checkProgramType (Program defs main) = undefined
+checkProgramType (Program defs main) =
+  getResult $
+    let funcEnv = map (\FunDef def _ _ -> def) defs
+        functionErrors = concatMap (\FunDef _ args expr -> ())
+        mainErrors = runReaderT checkExprType main []
+     in Right ()
 
 checkExprType :: Expr -> ReaderT (Env, [TypedFun]) (Writer [Error]) Type
 checkExprType (IntLit _) = return TyInt
@@ -136,10 +141,13 @@ checkExprType (Var name) =
     varType <- asks $ (name `lookup`) . fst
     return $ fromMaybe (error ("Undeclared variable " ++ name)) varType
 checkExprType (Infix op left right) =
-  ( case op of
+  do
+    rightType <- checkExprType right
+    leftType <- checkExprType left
+    case op of
       Add -> checkArithmeticOperator
       Sub -> checkArithmeticOperator
-      Mult -> checkArithmeticOperator
+      Mult -> checkArithmetiÍcOperator
       Div -> checkArithmeticOperator
       Eq -> checkComparissonOperator
       NEq -> checkComparissonOperator
@@ -147,9 +155,7 @@ checkExprType (Infix op left right) =
       LTh -> checkComparissonOperator
       GEq -> checkComparissonOperator
       LEq -> checkComparissonOperator
-  )
-    left
-    right
+      $ leftType rightType
 checkExprType (If cond thenExpr elseExpr) =
   do
     elseType <- checkExprType elseExpr
@@ -171,24 +177,18 @@ checkExprType (App name args) = do
     let expected = length expectedTypes
         actual = length actualTypes
      in [ArgNumApp name actual expected | actual /= expected]
-  tell $ checkArguments expectedTypes actualTypes
+  tell $ concat $ zipWithM (\a e -> [Expected e a | e /= a]) expectedTypes actualTypes
   return returnType
 
-checkArithmeticOperator left right =
+checkArithmeticOperator leftType rightType =
   do
-    rightType <- checkExprType right
-    leftType <- checkExprType left
     tell $ [Expected TyInt leftType | leftType /= TyInt] ++ [Expected TyInt rightType | rightType /= TyInt]
     return TyInt
 
-checkComparissonOperator left right =
+checkComparissonOperator leftType rightType =
   do
-    rightType <- checkExprType right
-    leftType <- checkExprType left
     tell [Expected leftType rightType | leftType /= rightType]
     return TyBool
-
-checkArguments expected actual = concat $ zipWithM (\a e -> [Expected e a | e /= a]) expected actual
 
 checkProgram :: Program -> Checked
 checkProgram prog@(Program defs main) = case do
