@@ -16,7 +16,6 @@ module Checker where
 -- se pueden agregar mas importaciones
 -- en caso de ser necesario
 
-import Control.Monad (zipWithM)
 import Control.Monad.Reader
 import Control.Monad.Writer
 import Data.List
@@ -129,7 +128,7 @@ checkUndeclaredNames (Program funcs main) =
 checkProgramType :: Program -> Either [Error] ()
 checkProgramType (Program defs main) = undefined
 
-checkExprType :: Expr -> ReaderT (Env, [FunDef]) (Writer [Error]) Type
+checkExprType :: Expr -> ReaderT (Env, [TypedFun]) (Writer [Error]) Type
 checkExprType (IntLit _) = return TyInt
 checkExprType (BoolLit _) = return TyBool
 checkExprType (Var name) =
@@ -156,8 +155,7 @@ checkExprType (If cond thenExpr elseExpr) =
     elseType <- checkExprType elseExpr
     thenType <- checkExprType thenExpr
     condType <- checkExprType cond
-    let localErrors = [Expected TyBool condType | condType /= TyBool] ++ [Expected thenType elseType | thenType /= elseType]
-    tell localErrors
+    tell $ [Expected TyBool condType | condType /= TyBool] ++ [Expected thenType elseType | thenType /= elseType]
     return thenType
 checkExprType (Let var@(name, _type) inner outer) =
   do
@@ -165,26 +163,22 @@ checkExprType (Let var@(name, _type) inner outer) =
     innerType <- checkExprType inner
     tell ([Expected _type innerType | _type /= innerType])
     return outerType
-checkExprType (App name args) = undefined
-
--- do
---   actualTypes <- mapM checkExprType args
---   defs <- asks snd
---   let (Sig expectedTypes returnType) = fromMaybe (error "Function not defined " ++ name) (lookup name defs)
---   let argErrors = checkArguments expectedTypes actualTypes
---   let lengthError =
---         let actual = length args
---             expected = length argTypes
---          in [ArgNumApp actual expected | actual /= expected]
---   _ <- modify ((lengthError ++ argErrors) ++)
---   return returnType
+checkExprType (App name args) = do
+  actualTypes <- mapM checkExprType args
+  maybeFunc <- asks $ lookup name . snd
+  let (Sig expectedTypes returnType) = fromMaybe (error ("Undeclared variable " ++ name)) maybeFunc
+  tell $
+    let expected = length expectedTypes
+        actual = length actualTypes
+     in [ArgNumApp name actual expected | actual /= expected]
+  tell $ checkArguments expectedTypes actualTypes
+  return returnType
 
 checkArithmeticOperator left right =
   do
     rightType <- checkExprType right
     leftType <- checkExprType left
-    let localErrors = [Expected TyInt leftType | leftType /= TyInt] ++ [Expected TyInt rightType | rightType /= TyInt]
-    tell localErrors
+    tell $ [Expected TyInt leftType | leftType /= TyInt] ++ [Expected TyInt rightType | rightType /= TyInt]
     return TyInt
 
 checkComparissonOperator left right =
