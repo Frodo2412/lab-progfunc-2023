@@ -13,6 +13,8 @@ module Checker where
 -- se pueden agregar mas importaciones
 -- en caso de ser necesario
 
+import Control.Arrow (ArrowChoice (left, right))
+import Control.Concurrent.STM (check)
 import Control.Monad (zipWithM)
 import Control.Monad.Reader
 import Control.Monad.State
@@ -64,11 +66,10 @@ checkRepeated = map Duplicated . foldl (\acc name -> if name `elem` acc then acc
 
 checkRepeatedNames :: [FunDef] -> Either [Error] ()
 checkRepeatedNames funcs =
-  let repeatedFunctions = checkRepeated $ map (\(FunDef (name, _) _ _) -> name) funcs
-      repeatedArguments = concatMap (\(FunDef _ args _) -> checkRepeated args) funcs
-   in case repeatedFunctions ++ repeatedArguments of
-        [] -> Right ()
-        errors -> Left errors
+  getResult $
+    let repeatedFunctions = checkRepeated $ map (\(FunDef (name, _) _ _) -> name) funcs
+        repeatedArguments = concatMap (\(FunDef _ args _) -> checkRepeated args) funcs
+     in repeatedFunctions ++ repeatedArguments
 
 -- 2.2 Number of parameters
 
@@ -123,8 +124,58 @@ checkUndeclaredNames (Program funcs main) =
       funcs
       ++ runReader (checkUndeclaredInExpr main) []
 
---
+-- 2.4 Type Checking
+checkProgramType :: Program -> Either [Error] ()
+checkProgramType (Program defs main) = undefined
 
+checkExprType (IntLit _) = lift $ checkLiteral TyInt
+checkExprType (BoolLit _) = lift $ checkLiteral TyBool
+checkExprType (Var name) =
+  do
+    vars <- ask
+    let actual = name `lookup` vars
+    _ <- maybe get put actual
+    return []
+checkExprType (Infix op left right) =
+  ( case op of
+      Add -> checkArithmeticOperator
+      Sub -> checkArithmeticOperator
+      Mult -> checkArithmeticOperator
+      Div -> checkArithmeticOperator
+      Eq -> checkEqualityOperator
+      NEq -> checkEqualityOperator
+      GTh -> checkEqualityOperator
+      LTh -> checkEqualityOperator
+      GEq -> checkArithmeticOperator
+      LEq -> checkEqualityOperator
+  )
+    op
+    left
+    right
+checkExprType (If cond thenExpr elseExpr) =
+  do
+    thenErrors <- checkExprType thenExpr
+    thenType <- get
+    elseErrors <- checkExprType elseExpr
+    elseType <- get
+    condErrors <- checkExprType cond
+    condType <- get
+    _ <- put thenType
+    let localErrors = [Expected TyBool condType | condType /= TyBool] ++ [Expected thenType elseType | thenType /= elseType]
+    let nestedErrors = condErrors ++ thenErrors ++ elseErrors
+    return $ localErrors ++ nestedErrors
+checkExprType (Let var inner outer) = undefined
+checkExprType App = undefined
+
+checkLiteral :: Type -> State Type [Error]
+checkLiteral actual =
+  do
+    _ <- put actual
+    return []
+
+checkArithmeticOperator :: Op -> Expr -> Expr -> ReaderT Env (State Type) [Error]
+checkEqualityOperator :: Op -> Expr -> Expr -> ReaderT Env (State Type) [Error]
+--
 checkProgram :: Program -> Checked
 checkProgram prog@(Program defs main) = case do
   checkRepeatedNames defs
